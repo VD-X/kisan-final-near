@@ -49,6 +49,7 @@ export interface RFQ {
   cropName: string;
   quantityKg: number;
   targetPricePerKg: number;
+  neededBy?: string;
   status: 'open' | 'closed';
   createdAt: string;
 }
@@ -228,6 +229,7 @@ export interface Offer {
   // Negotiation fields
   counterPrice?: number;
   counterQuantity?: number;
+  expectedDeliveryDate?: string;
   lastActionBy?: 'buyer' | 'farmer';
   history?: {
       role: 'buyer' | 'farmer';
@@ -250,6 +252,10 @@ export interface Order {
   totalAmount: number;
   status: OrderStatus;
   date: string;
+  
+  // Payment Status
+  paymentStatus?: 'pending' | 'review' | 'paid';
+  paymentProof?: string;
 
   // Logistics
   farmerName: string;
@@ -279,6 +285,10 @@ export interface TransportRequest {
   finalFare?: number;
   transporterId?: string;
   deliveryOtp?: string;
+  pickupDate?: string;
+  pickupTime?: string;
+  pickupConfirmedAt?: string;
+  deliveryConfirmedAt?: string;
   createdAt: string;
 }
 
@@ -289,6 +299,17 @@ export interface TransportBid {
   amount: number;
   message?: string;
   status: TransportBidStatus;
+  
+  // Negotiation fields
+  counterAmount?: number;
+  lastActionBy?: 'transporter' | 'buyer';
+  history?: {
+      role: 'transporter' | 'buyer';
+      amount: number;
+      action: 'bid' | 'counter' | 'accept' | 'reject';
+      timestamp: string;
+  }[];
+
   createdAt: string;
 }
 

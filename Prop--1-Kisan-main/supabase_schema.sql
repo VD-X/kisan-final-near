@@ -43,6 +43,7 @@ create table if not exists offers (
   "quantityRequested" numeric, 
   "offeredPrice" numeric, 
   "totalAmount" numeric,
+  "expectedDeliveryDate" text,
   "status" text default 'pending',
   
   -- Negotiation fields
@@ -86,6 +87,10 @@ create table if not exists transport_requests (
   "finalFare" numeric,
   "transporterId" text references users("id"),
   "deliveryOtp" text,
+  "pickupDate" text,
+  "pickupTime" text,
+  "pickupConfirmedAt" timestamp with time zone,
+  "deliveryConfirmedAt" timestamp with time zone,
   "createdAt" timestamp with time zone default timezone('utc'::text, now())
 );
 
@@ -154,6 +159,7 @@ create table if not exists rfqs (
   "cropName" text,
   "quantityKg" numeric,
   "targetPricePerKg" numeric,
+  "neededBy" text,
   "status" text default 'open',
   "createdAt" timestamp with time zone default timezone('utc'::text, now())
 );

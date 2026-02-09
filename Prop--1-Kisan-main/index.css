@@ -1,8 +1,28 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+
+@theme {
+  --font-sans: 'Outfit', sans-serif;
+  
+  --color-nature-50: #f0fdf4;
+  --color-nature-100: #dcfce7;
+  --color-nature-200: #bbf7d0;
+  --color-nature-300: #86efac;
+  --color-nature-400: #4ade80;
+  --color-nature-500: #22c55e;
+  --color-nature-600: #16a34a;
+  --color-nature-700: #15803d;
+  --color-nature-800: #166534;
+  --color-nature-900: #14532d;
+  --color-nature-950: #052e16;
+
+  --color-earth-50: #fdf8f6;
+  --color-earth-100: #f2e8e5;
+  --color-earth-500: #78350f;
+  --color-earth-800: #451a03;
+}
 
 body {
   margin: 0;
   padding: 0;
+  font-family: var(--font-sans);
 }

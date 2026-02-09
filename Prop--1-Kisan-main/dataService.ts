@@ -179,6 +179,8 @@ export async function placeOffer(payload: any) {
     offeredPrice: payload.offeredPrice,
     totalAmount: payload.totalAmount,
     status: payload.status,
+    lastActionBy: payload.lastActionBy,
+    history: payload.history,
     createdAt: payload.createdAt
   }
   console.log("Placing offer with payload:", offerData);
@@ -216,11 +218,20 @@ export async function createOrder(payload: any) {
     buyerName: payload.buyerName,
     buyerLocation: payload.buyerLocation,
     distanceKm: payload.distanceKm,
-    transporterId: payload.transporterId
+    transporterId: payload.transporterId,
+    paymentStatus: payload.paymentStatus, // <--- Added
+    paymentProof: payload.paymentProof    // <--- Added
   }
   console.log("Creating order with payload:", orderData);
   const { data, error } = await c.from('orders').insert(orderData).select().single()
   if (error) { console.error('createOrder error', error); throw error }
+  return data
+}
+
+export async function updateOrderPayment(id: string, paymentStatus: string, paymentProof?: string) {
+  const c = getSupabase(); if (!c) throw new Error('Supabase not configured')
+  const { data, error } = await c.from('orders').update({ paymentStatus, paymentProof }).eq('id', id).select().single()
+  if (error) { console.error('updateOrderPayment error', error); throw error }
   return data
 }
 

@@ -1,0 +1,41 @@
+{
+  "tech_stack": [
+    "TypeScript",
+    "React",
+    "Vite",
+    "Tailwind CSS",
+    "Supabase (Auth, PostgREST, Storage)"
+  ],
+  "features": [
+    {
+      "name": "Authentication & Profiles",
+      "description": "Email+password authentication via Supabase Auth; user profile stored in public.users with role-based access via RLS.",
+      "files": ["supabaseClient.ts", "dataService.ts", "App.tsx"]
+    },
+    {
+      "name": "Listings",
+      "description": "Farmers create/update/delete crop listings; public read; farmer-only write enforced by RLS.",
+      "files": ["dataService.ts", "App.tsx"]
+    },
+    {
+      "name": "Offers & Negotiation",
+      "description": "Buyers place offers on listings; farmers can counter; accepting offer creates an order.",
+      "files": ["dataService.ts", "App.tsx", "types.ts"]
+    },
+    {
+      "name": "Orders & Payment Status",
+      "description": "Orders are created from accepted offers and track status and payment status; RLS allows involved parties access.",
+      "files": ["dataService.ts", "App.tsx", "types.ts"]
+    },
+    {
+      "name": "Transport Requests & Bids",
+      "description": "Buyer/Farmer creates transport request; transporters bid; assignment updates request and order.",
+      "files": ["dataService.ts", "App.tsx", "types.ts"]
+    },
+    {
+      "name": "Messaging",
+      "description": "In-app messages stored in public.messages; send/read allowed only for involved users via RLS.",
+      "files": ["dataService.ts", "App.tsx", "types.ts"]
+    }
+  ]
+}

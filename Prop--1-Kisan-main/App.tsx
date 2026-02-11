@@ -95,8 +95,12 @@ import VoiceInput from './components/VoiceInput';
 import ChooseRole from './components/ChooseRole';
 import { ChatDrawer } from './components/ChatDrawer';
 import { InvoiceModal } from './components/InvoiceModal';
+import { LocationPicker, PickedLocation } from './components/LocationPicker';
+import { RouteMapPreview } from './components/RouteMapPreview';
+import { LiveDeliveryMap } from './components/LiveDeliveryMap';
 // import { analyzeCropImage } from './services/aiService';
 import { getSupabase } from './supabaseClient';
+import { getOsrmDrivingDistanceKm } from './services/routing';
 import {
    User,
    UserRole,
@@ -258,6 +262,10 @@ const AuthWizard = ({ initialRole, initialMode = 'login', onComplete, onBack }: 
    const [step, setStep] = useState<'role-select' | 'auth' | 'profile'>(initialRole ? 'auth' : 'role-select');
    const [isLoginMode, setAuthMode] = useState<'login' | 'register'>(initialMode);
    const [isLoading, setIsLoading] = useState(false);
+   const [authError, setAuthError] = useState<string | null>(null);
+   const [elapsedSec, setElapsedSec] = useState(0);
+   const activeAuthRequestIdRef = React.useRef(0);
+   const forceStopShownRef = React.useRef(false);
    const [formData, setFormData] = useState({
       role: initialRole,
       email: '',
@@ -269,9 +277,15 @@ const AuthWizard = ({ initialRole, initialMode = 'login', onComplete, onBack }: 
    });
 
    const getAuthErrorMessage = (err: any) => {
+      if (!err) return "Authentication failed";
+      if (typeof err === 'string') return err;
       const code = err?.code as string | undefined;
       const msg = (err?.message || '').toString();
       const msgLower = msg.toLowerCase();
+      const name = (err?.name || '').toString();
+      if (name === 'AbortError' || msgLower.includes('aborterror') || msgLower.includes('aborted')) {
+         return "Request timed out. Your browser is blocking the connection. Try clearing site data for localhost, disable VPN/antivirus web shield, or use Incognito.";
+      }
       if (code === 'user_already_exists' || msgLower.includes('already registered') || msgLower.includes('already been registered') || msgLower.includes('already exists')) {
          return "An account already exists for this number. Please login instead.";
       }
@@ -298,34 +312,76 @@ const AuthWizard = ({ initialRole, initialMode = 'login', onComplete, onBack }: 
       }
    };
 
+   React.useEffect(() => {
+      if (!isLoading) {
+         setElapsedSec(0);
+         forceStopShownRef.current = false;
+         return;
+      }
+      const startedAt = Date.now();
+      const i = setInterval(() => {
+         setElapsedSec(Math.floor((Date.now() - startedAt) / 1000));
+      }, 250);
+      return () => clearInterval(i);
+   }, [isLoading]);
+
+   React.useEffect(() => {
+      if (!isLoading) return;
+      if (elapsedSec < 35) return;
+      if (forceStopShownRef.current) return;
+      forceStopShownRef.current = true;
+      activeAuthRequestIdRef.current = 0;
+      setAuthError('Login is taking too long. This usually means the network request is blocked (AdBlock/VPN/Firewall). Please disable AdBlock/VPN or try Incognito and retry.');
+      setIsLoading(false);
+   }, [elapsedSec, isLoading]);
+
    const handleRoleSelect = (role: UserRole) => {
       setFormData(prev => ({ ...prev, role }));
       setStep('auth');
    };
 
    const handleSubmit = async () => {
-      if (!formData.phone || !formData.password) {
-         alert("Please enter mobile number and password");
+      const phone = (formData.phone || '').trim();
+      const password = (formData.password || '').toString();
+      if (!phone || !password) {
+         setAuthError("Please enter mobile number and password.");
+         return;
+      }
+      if (!/^\d{10}$/.test(phone)) {
+         setAuthError("Please enter a valid 10-digit mobile number.");
          return;
       }
       
+      setAuthError(null);
+      const requestId = Date.now();
+      activeAuthRequestIdRef.current = requestId;
       setIsLoading(true);
 
       try {
+         const net = await withTimeout('connectivity', svc.checkSupabaseConnectivity(6000), 8000);
+         if (activeAuthRequestIdRef.current !== requestId) return;
+         if (!net?.rest?.ok) {
+            const authPart = net?.auth?.ok ? `auth=${net.auth.status}` : `auth_error=${net?.auth?.error || 'unknown'}`
+            const restPart = net?.rest?.ok ? `rest=${net.rest.status}` : `rest_error=${net?.rest?.error || 'unknown'}`
+            setAuthError(`Cannot reach server (${authPart}, ${restPart}). Disable AdBlock/VPN and allow requests to *.supabase.co.`);
+            return;
+         }
+
          if (isLoginMode === 'register') {
             if (formData.password !== formData.confirmPassword) {
-               alert("Passwords do not match");
+               setAuthError("Passwords do not match.");
                return;
             }
             if (formData.password.length < 6) {
-               alert("Password must be at least 6 characters");
+               setAuthError("Password must be at least 6 characters.");
                return;
             }
 
-            const res: any = await withTimeout('register', svc.registerWithPhonePassword(formData.phone, formData.password, { role: formData.role || undefined, email: null }), 25000);
+            const res: any = await withTimeout('register', svc.registerWithPhonePassword(phone, password, { role: formData.role || undefined, email: null }), 25000);
+            if (activeAuthRequestIdRef.current !== requestId) return;
             if (res?.error) {
                const friendly = getAuthErrorMessage(res.error);
-               alert(friendly);
+               setAuthError(friendly);
                if (friendly.toLowerCase().includes('already exists')) setAuthMode('login');
                return;
             }
@@ -336,8 +392,9 @@ const AuthWizard = ({ initialRole, initialMode = 'login', onComplete, onBack }: 
             setFormData(prev => ({ ...prev, userId }));
             setStep('profile');
          } else {
-            const res: any = await withTimeout('login', svc.loginWithPhonePassword(formData.phone, formData.password), 25000);
-            if (res?.error) { alert(getAuthErrorMessage(res.error)); return; }
+            const res: any = await withTimeout('login', svc.loginWithPhonePassword(phone, password), 25000);
+            if (activeAuthRequestIdRef.current !== requestId) return;
+            if (res?.error) { setAuthError(getAuthErrorMessage(res.error)); return; }
 
             const userId = res?.data?.id;
             if (!userId) return;
@@ -348,7 +405,7 @@ const AuthWizard = ({ initialRole, initialMode = 'login', onComplete, onBack }: 
                return;
             }
 
-            alert("Login successful. Please complete your profile to continue.");
+            setAuthError("Login successful. Please complete your profile to continue.");
             setFormData(prev => ({ ...prev, userId, role: (res?.data?.role as any) || prev.role, email: (res?.data?.email as any) || '' }));
             setStep('profile');
          }
@@ -365,7 +422,7 @@ const AuthWizard = ({ initialRole, initialMode = 'login', onComplete, onBack }: 
                   onComplete(profile)
                   return
                }
-               alert("Login succeeded, but your profile is not set up yet. Please complete your profile to continue.");
+               setAuthError("Login succeeded, but your profile is not set up yet. Please complete your profile to continue.");
                setFormData(prev => ({ ...prev, userId: sessionUserId }));
                setStep('profile');
                return
@@ -374,12 +431,15 @@ const AuthWizard = ({ initialRole, initialMode = 'login', onComplete, onBack }: 
             const net = await svc.checkSupabaseConnectivity(8000)
             const authPart = net?.auth?.ok ? `auth=${net.auth.status}` : `auth_error=${net?.auth?.error || 'unknown'}`
             const restPart = net?.rest?.ok ? `rest=${net.rest.status}` : `rest_error=${net?.rest?.error || 'unknown'}`
-            alert(`Request timed out during ${label}. Connectivity: ${authPart}, ${restPart}. If rest/auth are failing, disable AdBlock/VPN, try Incognito, and allow requests to *.supabase.co.`);
+            setAuthError(`Request timed out during ${label}. Connectivity: ${authPart}, ${restPart}. Disable AdBlock/VPN, try Incognito, and allow requests to *.supabase.co.`);
             return
          }
-         alert(getAuthErrorMessage(e));
+         setAuthError(getAuthErrorMessage(e));
       } finally {
-         setIsLoading(false);
+         if (activeAuthRequestIdRef.current === requestId) {
+            activeAuthRequestIdRef.current = 0;
+            setIsLoading(false);
+         }
       }
    };
 
@@ -428,8 +488,25 @@ const AuthWizard = ({ initialRole, initialMode = 'login', onComplete, onBack }: 
                         )}
  
                         <Button className="w-full h-12" onClick={handleSubmit} disabled={isLoading}>
-                           {isLoading ? 'Processing...' : (isLoginMode === 'login' ? 'Login' : 'Continue')}
+                           {isLoading ? (elapsedSec > 0 ? `Processing... (${elapsedSec}s)` : 'Processing...') : (isLoginMode === 'login' ? 'Login' : 'Continue')}
                         </Button>
+                        {isLoading && (
+                           <button
+                              className="w-full text-center text-sm font-bold text-slate-500 hover:text-slate-700 underline"
+                              onClick={() => {
+                                 activeAuthRequestIdRef.current = 0;
+                                 setIsLoading(false);
+                                 setAuthError('Login cancelled. Please try again.');
+                              }}
+                           >
+                              Cancel
+                           </button>
+                        )}
+                        {authError && (
+                           <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-sm font-bold">
+                              {authError}
+                           </div>
+                        )}
                         <div className="text-center">
                            <button onClick={() => setAuthMode(isLoginMode === 'login' ? 'register' : 'login')} className="text-sm font-medium text-nature-600 hover:text-nature-700 underline">
                               {isLoginMode === 'login' ? "New here? Create Account" : "Already have an account? Login"}
@@ -584,7 +661,7 @@ const TransporterRegistration = ({ onSubmit }: { onSubmit: (profile: Transporter
 
 // --- 4. DASHBOARDS ---
 
-const FarmerDashboard = ({ user, listings, offers, orders, messages, inventoryItems, payouts, transportRequests, allUsers, onAddInventoryItem, onAddPayout, onSendMessage, onAddListing, onUpdateListing, onDeleteListing, onUpdateProfile, onUpdateListingStatus, onAcceptOffer, onRejectOffer, onCounterOffer, onRaiseDispute, onLogout, onAcceptTransportRequest, onOpenChat, onViewInvoice, onUpdateOrderPayment }: any) => {
+const FarmerDashboard = ({ user, listings, offers, orders, messages, inventoryItems, payouts, transportRequests, allUsers, onAddInventoryItem, onAddPayout, onSendMessage, onAddListing, onUpdateListing, onDeleteListing, onUpdateProfile, onUpdateListingStatus, onAcceptOffer, onRejectOffer, onCounterOffer, onRaiseDispute, onLogout, onAcceptTransportRequest, onOpenChat, onViewInvoice, onUpdateOrderPayment, onOpenLocationPicker }: any) => {
    const [view, setView] = useState('home');
    const [isSidebarOpen, setIsSidebarOpen] = useState(false);
    const myListings = listings.filter((l: any) => l.farmerId === user.id);
@@ -620,6 +697,7 @@ const FarmerDashboard = ({ user, listings, offers, orders, messages, inventoryIt
    // Profile Edit State
    const [profileData, setProfileData] = useState<FarmerProfile>(user.profile);
    const [profileTab, setProfileTab] = useState<'overview' | 'edit'>('overview');
+   const [deliveryTracking, setDeliveryTracking] = useState<{ open: boolean; orderId: string }>({ open: false, orderId: '' });
 
    // Notifications State
    const [notifications, setNotifications] = useState(MOCK_NOTIFICATIONS);
@@ -1528,7 +1606,7 @@ const FarmerDashboard = ({ user, listings, offers, orders, messages, inventoryIt
                                  </div>
                                  <div className="flex gap-2">
                                     <Button variant="outline" size="sm" className="h-9 text-xs font-bold" onClick={() => onViewInvoice(o)}><FileText className="w-4 h-4 mr-2" /> Invoice</Button>
-                                    <Button size="sm" className="h-9 text-xs font-bold bg-purple-600 hover:bg-purple-700"><MapPin className="w-4 h-4 mr-2" /> Track Pickup</Button>
+                                    <Button size="sm" className="h-9 text-xs font-bold bg-purple-600 hover:bg-purple-700" onClick={() => setDeliveryTracking({ open: true, orderId: o.id })}><MapPin className="w-4 h-4 mr-2" /> Track Pickup</Button>
                                     
                                     {/* Payment Verification for Farmer */}
                                     {o.paymentStatus === 'review' && (
@@ -1878,6 +1956,26 @@ const FarmerDashboard = ({ user, listings, offers, orders, messages, inventoryIt
                                        <Input label="State" value={profileData.state} onChange={e => setProfileData({ ...profileData, state: e.target.value })} />
                                        <Input label="Pincode" value={profileData.pincode || ''} onChange={e => setProfileData({ ...profileData, pincode: e.target.value })} />
                                     </div>
+                                    <div className="mt-4 p-4 rounded-2xl border border-slate-200 bg-slate-50 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                                       <div className="min-w-0">
+                                          <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Pickup Pin</div>
+                                          <div className="text-sm font-black text-slate-900 truncate">{profileData.pickupAddress || 'Not set'}</div>
+                                          <div className="text-xs text-slate-500 font-bold">
+                                             {profileData.pickupLat != null && profileData.pickupLng != null ? `${Number(profileData.pickupLat).toFixed(6)}, ${Number(profileData.pickupLng).toFixed(6)}` : 'Coordinates not set'}
+                                          </div>
+                                       </div>
+                                       <Button
+                                          variant="outline"
+                                          className="h-11 border-slate-200 font-black"
+                                          onClick={() => onOpenLocationPicker?.({
+                                             title: 'Set Pickup Location',
+                                             initial: profileData.pickupLat != null && profileData.pickupLng != null ? { lat: Number(profileData.pickupLat), lng: Number(profileData.pickupLng), address: profileData.pickupAddress } : undefined,
+                                             onPick: (loc: PickedLocation) => setProfileData({ ...profileData, pickupLat: loc.lat, pickupLng: loc.lng, pickupAddress: loc.address })
+                                          })}
+                                       >
+                                          Set Pickup Location
+                                       </Button>
+                                    </div>
                                  </div>
 
                                  {/* Farm Details */}
@@ -1964,6 +2062,72 @@ const FarmerDashboard = ({ user, listings, offers, orders, messages, inventoryIt
                )}
                {/* ... existing views ... */}
             </main>
+            {deliveryTracking.open && (() => {
+               const order = (myOrders || []).find((x: any) => x.id === deliveryTracking.orderId);
+               if (!order) return null;
+               const req = (transportRequests || []).find((r: any) => r.orderId === order.id);
+               const buyerUser = (allUsers || []).find((u: any) => u.id === (order.buyerId || req?.buyerId));
+               const buyerProfile: any = buyerUser?.profile || {};
+               const pickup = profileData?.pickupLat != null && profileData?.pickupLng != null ? { lat: Number(profileData.pickupLat), lng: Number(profileData.pickupLng) } : null;
+               const drop = buyerProfile?.defaultDropLat != null && buyerProfile?.defaultDropLng != null ? { lat: Number(buyerProfile.defaultDropLat), lng: Number(buyerProfile.defaultDropLng) } : null;
+               const transporter = req?.transporterLat != null && req?.transporterLng != null ? { lat: Number(req.transporterLat), lng: Number(req.transporterLng) } : null;
+               const canMap = !!(pickup && drop && Number.isFinite(pickup.lat) && Number.isFinite(pickup.lng) && Number.isFinite(drop.lat) && Number.isFinite(drop.lng));
+               return (
+                  <div className="fixed inset-0 z-[140] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+                     <Card className="w-full max-w-5xl relative bg-white p-0 overflow-hidden">
+                        <div className="p-5 border-b border-slate-100 flex items-center justify-between gap-4">
+                           <div className="min-w-0">
+                              <div className="text-xs text-slate-400 font-black uppercase tracking-widest">Live Tracking</div>
+                              <div className="font-black text-slate-900 truncate">Order #{order.id}</div>
+                              <div className="text-xs text-slate-500 font-bold">Refreshes every 5 seconds (when enabled)</div>
+                           </div>
+                           <button onClick={() => setDeliveryTracking({ open: false, orderId: '' })} className="bg-white/80 rounded-full p-2 text-slate-700 border border-slate-200">
+                              <X className="w-5 h-5" />
+                           </button>
+                        </div>
+                        <div className="p-5 space-y-4">
+                           <div className="grid md:grid-cols-2 gap-3">
+                              <div className="p-4 rounded-2xl border border-slate-200 bg-slate-50">
+                                 <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Pickup</div>
+                                 <div className="text-sm font-black text-slate-900">{profileData?.pickupAddress || order.farmerLocation || '—'}</div>
+                              </div>
+                              <div className="p-4 rounded-2xl border border-slate-200 bg-slate-50">
+                                 <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Drop</div>
+                                 <div className="text-sm font-black text-slate-900">{buyerProfile?.defaultDropAddress || order.buyerLocation || '—'}</div>
+                              </div>
+                           </div>
+                           {!req && <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-amber-800 text-sm font-bold">Transport is not assigned yet.</div>}
+                           {req && (
+                              <div className="grid md:grid-cols-3 gap-3">
+                                 <div className="p-4 rounded-2xl border border-slate-200 bg-white">
+                                    <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Status</div>
+                                    <div className="text-sm font-black text-slate-900">{String(req.status || '').replace('_', ' ')}</div>
+                                 </div>
+                                 <div className="p-4 rounded-2xl border border-slate-200 bg-white">
+                                    <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Transporter Location</div>
+                                    <div className="text-sm font-black text-slate-900">{transporter ? `${transporter.lat.toFixed(6)}, ${transporter.lng.toFixed(6)}` : 'Not shared yet'}</div>
+                                    <div className="text-xs font-bold text-slate-500">{req.transporterLocationUpdatedAt ? `Updated: ${new Date(req.transporterLocationUpdatedAt).toLocaleString()}` : '—'}</div>
+                                 </div>
+                                 <div className="p-4 rounded-2xl border border-slate-200 bg-white">
+                                    <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Accuracy / Speed</div>
+                                    <div className="text-sm font-black text-slate-900">
+                                       {req.transporterAccuracyM != null ? `${Number(req.transporterAccuracyM).toFixed(0)}m` : '—'} / {req.transporterSpeedKmph != null ? `${Number(req.transporterSpeedKmph).toFixed(1)} km/h` : '—'}
+                                    </div>
+                                 </div>
+                              </div>
+                           )}
+                           {canMap ? (
+                              <LiveDeliveryMap pickup={pickup!} drop={drop!} transporter={transporter} />
+                           ) : (
+                              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 text-slate-700 text-sm font-bold">
+                                 Set pickup and drop coordinates in profiles to enable the live map.
+                              </div>
+                           )}
+                        </div>
+                     </Card>
+                  </div>
+               );
+            })()}
          {viewerOpen && (
             <div className="fixed inset-0 z-[120] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
                <Card className="w-full max-w-5xl overflow-hidden relative bg-white">
@@ -2377,7 +2541,7 @@ const FarmerDashboard = ({ user, listings, offers, orders, messages, inventoryIt
 };
 
 // Buyer and Transporter Dashboards remain the same
-const BuyerDashboard = ({ user, listings, offers, orders, messages, rfqs, transportRequests, transportBids, allUsers, onAddRfq, onSendMessage, onPlaceOffer, onAcceptOffer, onCounterOffer, onCancelOffer, onLogout, onUpdateProfile, onRaiseDispute, onCreateTransportRequest, onAcceptTransportBid, onCounterTransportBid, onUpdateTransportRequest, onOpenChat, onViewInvoice, onUpdateOrderPayment, onDirectBuy }: any) => {
+const BuyerDashboard = ({ user, listings, offers, orders, messages, rfqs, transportRequests, transportBids, allUsers, onAddRfq, onSendMessage, onPlaceOffer, onAcceptOffer, onCounterOffer, onCancelOffer, onLogout, onUpdateProfile, onRaiseDispute, onCreateTransportRequest, onAcceptTransportBid, onCounterTransportBid, onUpdateTransportRequest, onOpenChat, onViewInvoice, onUpdateOrderPayment, onDirectBuy, onOpenLocationPicker }: any) => {
    const [view, setView] = useState('home');
    const [searchTerm, setSearchTerm] = useState('');
    const [selectedListing, setSelectedListing] = useState<any>(null);
@@ -2436,6 +2600,7 @@ const BuyerDashboard = ({ user, listings, offers, orders, messages, rfqs, transp
    // Buyer Profile State
    const [profileData, setProfileData] = useState<BuyerProfile>(user.profile || { fullName: user.phone, city: '', state: '', language: 'English' });
    const [profileTab, setProfileTab] = useState<'overview' | 'edit'>('overview');
+   const [deliveryTracking, setDeliveryTracking] = useState<{ open: boolean; orderId: string }>({ open: false, orderId: '' });
 
    // Marketplace State
    const [marketFilter, setMarketFilter] = useState<'all' | 'Vegetables' | 'Grains' | 'Fruits'>('all');
@@ -2677,10 +2842,18 @@ const BuyerDashboard = ({ user, listings, offers, orders, messages, rfqs, transp
                         const price = Number(l.pricePerKg ?? 0)
                         return (
                            <Card key={l.id} className="p-0 overflow-hidden bg-white border border-slate-200/80 shadow-sm hover:shadow-2xl hover:border-blue-300 transition-all duration-300 rounded-2xl">
-                              <button
+                              <div
                                  className="relative w-full text-left"
                                  onClick={() => { setSelectedListing(l); setView('product-details'); }}
-                                 type="button"
+                                 role="button"
+                                 tabIndex={0}
+                                 onKeyDown={(e) => {
+                                    if (e.key === 'Enter' || e.key === ' ') {
+                                       e.preventDefault();
+                                       setSelectedListing(l);
+                                       setView('product-details');
+                                    }
+                                 }}
                               >
                                  <div className="h-48 overflow-hidden bg-slate-100 relative">
                                     {imageUrl ? (
@@ -2729,7 +2902,7 @@ const BuyerDashboard = ({ user, listings, offers, orders, messages, rfqs, transp
                                        </div>
                                     </div>
                                  </div>
-                              </button>
+                              </div>
 
                               <div className="p-5">
                                  <div className="flex items-start justify-between gap-4">
@@ -3318,7 +3491,7 @@ const BuyerDashboard = ({ user, listings, offers, orders, messages, rfqs, transp
                                  </div>
                                  <div className="flex gap-2">
                                     <Button variant="ghost" className="h-8 text-xs font-bold" onClick={() => onViewInvoice(o)}><FileText className="w-3 h-3 mr-1" /> Invoice</Button>
-                                    <Button variant="outline" className="h-8 text-xs font-bold text-blue-600 border-blue-100 hover:bg-blue-50">Track Shipment</Button>
+                                    <Button variant="outline" className="h-8 text-xs font-bold text-blue-600 border-blue-100 hover:bg-blue-50" onClick={() => setDeliveryTracking({ open: true, orderId: o.id })}>Track Shipment</Button>
                                  </div>
                               </div>
                               <div className="relative px-2 pb-2">
@@ -3525,6 +3698,26 @@ const BuyerDashboard = ({ user, listings, offers, orders, messages, rfqs, transp
                                     <Input label="City" value={profileData.city} onChange={e => setProfileData({ ...profileData, city: e.target.value })} />
                                     <Input label="State" value={profileData.state} onChange={e => setProfileData({ ...profileData, state: e.target.value })} />
                                  </div>
+                                 <div className="p-4 rounded-2xl border border-slate-200 bg-slate-50 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                                    <div className="min-w-0">
+                                       <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Default Delivery Pin</div>
+                                       <div className="text-sm font-black text-slate-900 truncate">{profileData.defaultDropAddress || 'Not set'}</div>
+                                       <div className="text-xs text-slate-500 font-bold">
+                                          {profileData.defaultDropLat != null && profileData.defaultDropLng != null ? `${Number(profileData.defaultDropLat).toFixed(6)}, ${Number(profileData.defaultDropLng).toFixed(6)}` : 'Coordinates not set'}
+                                       </div>
+                                    </div>
+                                    <Button
+                                       variant="outline"
+                                       className="h-11 border-slate-200 font-black"
+                                       onClick={() => onOpenLocationPicker?.({
+                                          title: 'Set Default Delivery Location',
+                                          initial: profileData.defaultDropLat != null && profileData.defaultDropLng != null ? { lat: Number(profileData.defaultDropLat), lng: Number(profileData.defaultDropLng), address: profileData.defaultDropAddress } : undefined,
+                                          onPick: (loc: PickedLocation) => setProfileData({ ...profileData, defaultDropLat: loc.lat, defaultDropLng: loc.lng, defaultDropAddress: loc.address })
+                                       })}
+                                    >
+                                       Set Delivery Location
+                                    </Button>
+                                 </div>
                                  <div className="grid md:grid-cols-2 gap-4">
                                     <Input label="GST Number" value={profileData.gstNumber || ''} onChange={e => setProfileData({ ...profileData, gstNumber: e.target.value })} placeholder="Optional" />
                                     <div className="space-y-1">
@@ -3542,7 +3735,7 @@ const BuyerDashboard = ({ user, listings, offers, orders, messages, rfqs, transp
                                     </div>
                                  </div>
                                  <div className="pt-4 flex gap-3">
-                                    <Button className="flex-1 bg-blue-600 hover:bg-blue-700" onClick={() => { onUpdateProfile(profileData); setProfileTab('overview'); }}>Save Changes</Button>
+                                    <Button className="flex-1 bg-blue-600 hover:bg-blue-700" onClick={() => { onUpdateProfile(user.id, profileData); setProfileTab('overview'); }}>Save Changes</Button>
                                     <Button variant="ghost" onClick={() => setProfileTab('overview')}>Cancel</Button>
                                  </div>
                               </div>
@@ -3723,6 +3916,73 @@ const BuyerDashboard = ({ user, listings, offers, orders, messages, rfqs, transp
             </div>
          )}
 
+         {deliveryTracking.open && (() => {
+            const order = (myOrders || []).find((x: any) => x.id === deliveryTracking.orderId);
+            if (!order) return null;
+            const req = (transportRequests || []).find((r: any) => r.orderId === order.id);
+            const farmerUser = (allUsers || []).find((u: any) => u.id === (order.farmerId || req?.farmerId));
+            const farmerProfile: any = farmerUser?.profile || {};
+            const pickup = farmerProfile?.pickupLat != null && farmerProfile?.pickupLng != null ? { lat: Number(farmerProfile.pickupLat), lng: Number(farmerProfile.pickupLng) } : null;
+            const drop = profileData?.defaultDropLat != null && profileData?.defaultDropLng != null ? { lat: Number(profileData.defaultDropLat), lng: Number(profileData.defaultDropLng) } : null;
+            const transporter = req?.transporterLat != null && req?.transporterLng != null ? { lat: Number(req.transporterLat), lng: Number(req.transporterLng) } : null;
+            const canMap = !!(pickup && drop && Number.isFinite(pickup.lat) && Number.isFinite(pickup.lng) && Number.isFinite(drop.lat) && Number.isFinite(drop.lng));
+            return (
+               <div className="fixed inset-0 z-[140] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+                  <Card className="w-full max-w-5xl relative bg-white p-0 overflow-hidden">
+                     <div className="p-5 border-b border-slate-100 flex items-center justify-between gap-4">
+                        <div className="min-w-0">
+                           <div className="text-xs text-slate-400 font-black uppercase tracking-widest">Live Tracking</div>
+                           <div className="font-black text-slate-900 truncate">Order #{order.id}</div>
+                           <div className="text-xs text-slate-500 font-bold">Refreshes every 5 seconds (when enabled)</div>
+                        </div>
+                        <button onClick={() => setDeliveryTracking({ open: false, orderId: '' })} className="bg-white/80 rounded-full p-2 text-slate-700 border border-slate-200">
+                           <X className="w-5 h-5" />
+                        </button>
+                     </div>
+                     <div className="p-5 space-y-4">
+                        <div className="grid md:grid-cols-2 gap-3">
+                           <div className="p-4 rounded-2xl border border-slate-200 bg-slate-50">
+                              <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Pickup</div>
+                              <div className="text-sm font-black text-slate-900">{farmerProfile?.pickupAddress || order.farmerLocation || '—'}</div>
+                           </div>
+                           <div className="p-4 rounded-2xl border border-slate-200 bg-slate-50">
+                              <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Drop</div>
+                              <div className="text-sm font-black text-slate-900">{profileData?.defaultDropAddress || order.buyerLocation || '—'}</div>
+                           </div>
+                        </div>
+                        {!req && <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-amber-800 text-sm font-bold">Transport is not assigned yet.</div>}
+                        {req && (
+                           <div className="grid md:grid-cols-3 gap-3">
+                              <div className="p-4 rounded-2xl border border-slate-200 bg-white">
+                                 <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Status</div>
+                                 <div className="text-sm font-black text-slate-900">{String(req.status || '').replace('_', ' ')}</div>
+                              </div>
+                              <div className="p-4 rounded-2xl border border-slate-200 bg-white">
+                                 <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Transporter Location</div>
+                                 <div className="text-sm font-black text-slate-900">{transporter ? `${transporter.lat.toFixed(6)}, ${transporter.lng.toFixed(6)}` : 'Not shared yet'}</div>
+                                 <div className="text-xs font-bold text-slate-500">{req.transporterLocationUpdatedAt ? `Updated: ${new Date(req.transporterLocationUpdatedAt).toLocaleString()}` : '—'}</div>
+                              </div>
+                              <div className="p-4 rounded-2xl border border-slate-200 bg-white">
+                                 <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Accuracy / Speed</div>
+                                 <div className="text-sm font-black text-slate-900">
+                                    {req.transporterAccuracyM != null ? `${Number(req.transporterAccuracyM).toFixed(0)}m` : '—'} / {req.transporterSpeedKmph != null ? `${Number(req.transporterSpeedKmph).toFixed(1)} km/h` : '—'}
+                                 </div>
+                              </div>
+                           </div>
+                        )}
+                        {canMap ? (
+                           <LiveDeliveryMap pickup={pickup!} drop={drop!} transporter={transporter} />
+                        ) : (
+                           <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 text-slate-700 text-sm font-bold">
+                              Set pickup and drop coordinates in profiles to enable the live map.
+                           </div>
+                        )}
+                     </div>
+                  </Card>
+               </div>
+            );
+         })()}
+
          {/* Place Offer Modal */}
          {showOfferModal && selectedListing && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-in fade-in duration-300">
@@ -3870,6 +4130,7 @@ const TransporterDashboard = ({ user, orders, messages, routePlans, transportReq
 
    // Load Board State
    const [loadFilter, setLoadFilter] = useState<'all' | 'local' | 'inter-city'>('all');
+   const [routePreview, setRoutePreview] = useState<{ open: boolean; pickup?: { lat: number; lng: number; label?: string }; drop?: { lat: number; lng: number; label?: string } }>({ open: false });
 
    // Notifications State
    const [notifications, setNotifications] = useState<any[]>([]);
@@ -3895,6 +4156,8 @@ const TransporterDashboard = ({ user, orders, messages, routePlans, transportReq
    const [transportNumberValue, setTransportNumberValue] = useState('');
    const [otpModal, setOtpModal] = useState<{ open: boolean; requestId: string; nextStatus: 'picked_up' | 'delivered' }>({ open: false, requestId: '', nextStatus: 'picked_up' });
    const [otpValue, setOtpValue] = useState('');
+   const [liveLocationError, setLiveLocationError] = useState<string | null>(null);
+   const liveLocationTimerRef = React.useRef<any>(null);
 
    // Add Vehicle State
    const [showAddVehicle, setShowAddVehicle] = useState(false);
@@ -3978,6 +4241,99 @@ const TransporterDashboard = ({ user, orders, messages, routePlans, transportReq
    const myDeliveries = (transportRequests || []).filter((r: any) => r.transporterId === user.id);
    const completedDeliveries = myDeliveries.filter((r: any) => r.status === 'delivered');
    const activeDeliveries = myDeliveries.filter((r: any) => r.status !== 'delivered' && r.status !== 'cancelled');
+
+   const trackableDeliveries = activeDeliveries.filter((r: any) => r.status === 'picked_up' || r.status === 'in_transit');
+   const trackableIdsKey = trackableDeliveries.map((r: any) => r.id).join('|');
+
+   React.useEffect(() => {
+      if (liveLocationTimerRef.current) {
+         clearInterval(liveLocationTimerRef.current);
+         liveLocationTimerRef.current = null;
+      }
+
+      if (!settingsData.locationSharing) return;
+      if (trackableDeliveries.length === 0) return;
+      if (typeof navigator === 'undefined' || !navigator.geolocation) {
+         setLiveLocationError('Geolocation is not available in this browser.');
+         return;
+      }
+
+      setLiveLocationError(null);
+
+      const getPosition = () =>
+         new Promise<GeolocationPosition>((resolve, reject) => {
+            const timer = setTimeout(() => reject(new Error('geo_timeout')), 9000);
+            navigator.geolocation.getCurrentPosition(
+               (p) => {
+                  clearTimeout(timer);
+                  resolve(p);
+               },
+               (e) => {
+                  clearTimeout(timer);
+                  reject(e);
+               },
+               { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
+            );
+         });
+
+      const tick = async () => {
+         try {
+            const p = await getPosition();
+            const lat = Number(p.coords.latitude);
+            const lng = Number(p.coords.longitude);
+            if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+
+            const speedKmph = p.coords.speed != null && Number.isFinite(p.coords.speed) ? Math.max(0, Number(p.coords.speed) * 3.6) : null;
+            const heading = p.coords.heading != null && Number.isFinite(p.coords.heading) ? Number(p.coords.heading) : null;
+            const accuracyM = p.coords.accuracy != null && Number.isFinite(p.coords.accuracy) ? Number(p.coords.accuracy) : null;
+
+            const payload = {
+               transporterId: user.id,
+               lat,
+               lng,
+               heading,
+               speedKmph: speedKmph != null ? Math.round(speedKmph * 10) / 10 : null,
+               accuracyM,
+               createdAt: new Date().toISOString()
+            };
+
+            await Promise.all(
+               trackableDeliveries.map((r: any) =>
+                  svc.updateTransporterLiveLocation(r.id, payload).catch((e: any) => {
+                     const msg = String(e?.message || e || '');
+                     if (msg.toLowerCase().includes('relation') && msg.toLowerCase().includes('transport_locations')) {
+                        setLiveLocationError('Live tracking table is missing in the database. Apply the Supabase migration and retry.');
+                        if (liveLocationTimerRef.current) {
+                           clearInterval(liveLocationTimerRef.current);
+                           liveLocationTimerRef.current = null;
+                        }
+                     } else if (msg.toLowerCase().includes('permission denied') || msg.toLowerCase().includes('new row violates row-level security') || msg.toLowerCase().includes('rls')) {
+                        setLiveLocationError('Live tracking is blocked by permissions. Ensure you are the assigned transporter and delivery is in picked up / in transit.');
+                     } else if (msg) {
+                        setLiveLocationError(msg);
+                     }
+                  })
+               )
+            );
+         } catch (e: any) {
+            const code = e?.code;
+            if (code === 1) setLiveLocationError('Location permission denied. Enable location access for this site to share live updates.');
+            else if (code === 2) setLiveLocationError('Location unavailable. Turn on GPS/Wi‑Fi and retry.');
+            else if (code === 3 || String(e?.message || '').includes('timeout')) setLiveLocationError('Location request timed out. Retrying…');
+            else setLiveLocationError('Failed to read current location. Retrying…');
+         }
+      };
+
+      void tick();
+      liveLocationTimerRef.current = setInterval(() => void tick(), 5000);
+
+      return () => {
+         if (liveLocationTimerRef.current) {
+            clearInterval(liveLocationTimerRef.current);
+            liveLocationTimerRef.current = null;
+         }
+      };
+   }, [settingsData.locationSharing, trackableIdsKey]);
 
    const totalEarnings = completedDeliveries.reduce((sum: number, r: any) => sum + (r.finalFare ?? r.estimatedFare ?? 0), 0);
 
@@ -4069,6 +4425,11 @@ const TransporterDashboard = ({ user, orders, messages, routePlans, transportReq
                         const cropName = order?.cropName || 'Crop';
                         const quantity = Number(order?.quantity || r.weightKg || 0);
                         const alreadyBid = (transportBids || []).some((b: any) => b.requestId === r.id && b.transporterId === user.id && b.status !== 'rejected' && b.status !== 'withdrawn');
+                        const farmerProfile: any = (allUsers || []).find((u: any) => u.id === r.farmerId)?.profile || {};
+                        const buyerProfile: any = (allUsers || []).find((u: any) => u.id === r.buyerId)?.profile || {};
+                        const pickupCoords = farmerProfile.pickupLat != null && farmerProfile.pickupLng != null ? { lat: Number(farmerProfile.pickupLat), lng: Number(farmerProfile.pickupLng) } : null;
+                        const dropCoords = buyerProfile.defaultDropLat != null && buyerProfile.defaultDropLng != null ? { lat: Number(buyerProfile.defaultDropLat), lng: Number(buyerProfile.defaultDropLng) } : null;
+                        const canShowMap = !!(pickupCoords && dropCoords && Number.isFinite(pickupCoords.lat) && Number.isFinite(pickupCoords.lng) && Number.isFinite(dropCoords.lat) && Number.isFinite(dropCoords.lng));
                         return (
                         <Card key={r.id} className="p-0 overflow-hidden border-orange-100 group hover:shadow-2xl transition-all duration-500">
                            <div className="flex flex-col md:flex-row">
@@ -4111,6 +4472,21 @@ const TransporterDashboard = ({ user, orders, messages, routePlans, transportReq
                                  </div>
 
                                  <div className="flex gap-4">
+                                    <Button
+                                       variant="outline"
+                                       className="flex-1 h-12 font-bold border-slate-200"
+                                       disabled={!canShowMap}
+                                       onClick={() => {
+                                          if (!pickupCoords || !dropCoords) return;
+                                          setRoutePreview({
+                                             open: true,
+                                             pickup: { ...pickupCoords, label: String(r.pickupLocation || '') },
+                                             drop: { ...dropCoords, label: String(r.dropLocation || '') }
+                                          });
+                                       }}
+                                    >
+                                       View Map
+                                    </Button>
                                     <Button variant="outline" disabled={alreadyBid} className="flex-1 h-12 font-bold border-slate-200" onClick={() => {
                                        setTransportNumberValue(String(r.estimatedFare || 0))
                                        setTransportNumberModal({ open: true, type: 'bid', requestId: r.id, title: 'Place Bid' })
@@ -4158,6 +4534,17 @@ const TransporterDashboard = ({ user, orders, messages, routePlans, transportReq
             {view === 'deliveries' && (
                <div className="space-y-6 animate-in slide-in-from-right-4">
                   <h2 className="text-2xl font-bold text-slate-900">My Active Shipments</h2>
+                  {settingsData.locationSharing && (trackableDeliveries.length > 0) && (
+                     <div className="p-4 rounded-2xl border border-slate-200 bg-white flex items-center justify-between gap-3">
+                        <div className="text-sm font-black text-slate-900">Live location sharing is ON</div>
+                        <div className="text-xs font-bold text-slate-500">Updates every 5 seconds</div>
+                     </div>
+                  )}
+                  {liveLocationError && (
+                     <div className="p-4 rounded-2xl bg-red-50 border border-red-200 text-red-700 text-sm font-bold">
+                        {liveLocationError}
+                     </div>
+                  )}
                   <div className="grid gap-6">
                      {activeDeliveries.map((r: any) => {
                         const order = orders.find((o: any) => o.id === r.orderId);
@@ -4855,6 +5242,36 @@ const TransporterDashboard = ({ user, orders, messages, routePlans, transportReq
                </Card>
             </div>
          )}
+         {routePreview.open && routePreview.pickup && routePreview.drop && (
+            <div className="fixed inset-0 z-[120] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+               <Card className="w-full max-w-5xl relative bg-white p-0 overflow-hidden">
+                  <div className="p-5 border-b border-slate-100 flex items-center justify-between gap-4">
+                     <div className="min-w-0">
+                        <div className="text-xs text-slate-400 font-black uppercase tracking-widest">Route</div>
+                        <div className="font-black text-slate-900 truncate">Pickup → Drop</div>
+                     </div>
+                     <button onClick={() => setRoutePreview({ open: false })} className="bg-white/80 rounded-full p-2 text-slate-700 border border-slate-200">
+                        <X className="w-5 h-5" />
+                     </button>
+                  </div>
+                  <div className="p-5 space-y-4">
+                     <div className="grid md:grid-cols-2 gap-3">
+                        <div className="p-4 rounded-2xl border border-slate-200 bg-slate-50">
+                           <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Pickup</div>
+                           <div className="text-sm font-black text-slate-900">{routePreview.pickup.label || '—'}</div>
+                           <div className="text-xs text-slate-500 font-bold">{routePreview.pickup.lat.toFixed(6)}, {routePreview.pickup.lng.toFixed(6)}</div>
+                        </div>
+                        <div className="p-4 rounded-2xl border border-slate-200 bg-slate-50">
+                           <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Drop</div>
+                           <div className="text-sm font-black text-slate-900">{routePreview.drop.label || '—'}</div>
+                           <div className="text-xs text-slate-500 font-bold">{routePreview.drop.lat.toFixed(6)}, {routePreview.drop.lng.toFixed(6)}</div>
+                        </div>
+                     </div>
+                     <RouteMapPreview pickup={{ lat: routePreview.pickup.lat, lng: routePreview.pickup.lng }} drop={{ lat: routePreview.drop.lat, lng: routePreview.drop.lng }} />
+                  </div>
+               </Card>
+            </div>
+         )}
          {otpModal.open && (
             <div className="fixed inset-0 z-[120] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
                <Card className="w-full max-w-md relative bg-white p-0 overflow-hidden">
@@ -5099,6 +5516,8 @@ const App = () => {
    const [transportBids, setTransportBids] = useState<TransportBid[]>([]);
    const [chatDrawer, setChatDrawer] = useState<{ open: boolean, targetUserId: string, targetUserName: string, listingId?: string, orderId?: string, offerId?: string }>({ open: false, targetUserId: '', targetUserName: '' });
    const [invoiceModal, setInvoiceModal] = useState<{ open: boolean, order: Order | null }>({ open: false, order: null });
+   const locationPickerCallbackRef = React.useRef<((loc: PickedLocation) => void) | null>(null);
+   const [locationPicker, setLocationPicker] = useState<{ open: boolean; title: string; initial?: { lat: number; lng: number; address?: string } }>({ open: false, title: '' });
 
    const handleOpenChat = (targetUserId: string, targetUserName: string, listingId?: string, orderId?: string, offerId?: string) => {
       setChatDrawer({ open: true, targetUserId, targetUserName, listingId, orderId, offerId });
@@ -5106,6 +5525,11 @@ const App = () => {
 
    const handleViewInvoice = (order: Order) => {
       setInvoiceModal({ open: true, order });
+   };
+
+   const handleOpenLocationPicker = (opts: { title: string; initial?: { lat: number; lng: number; address?: string }; onPick: (loc: PickedLocation) => void }) => {
+      locationPickerCallbackRef.current = opts.onPick;
+      setLocationPicker({ open: true, title: opts.title, initial: opts.initial });
    };
 
    // Load data from Supabase on mount
@@ -5184,6 +5608,52 @@ const App = () => {
       };
       loadData();
    }, [supabaseAvailable]);
+
+   const deliveryPollTimerRef = React.useRef<any>(null);
+   const deliveryPollInFlightRef = React.useRef(false);
+   const hasActiveDeliveryToPoll = React.useMemo(() => {
+      if (!currentUser || currentUser.role === 'admin') return false;
+      return (transportRequests || []).some((r: any) =>
+         (r.status === 'assigned' || r.status === 'picked_up' || r.status === 'in_transit') &&
+         (r.buyerId === currentUser.id || r.farmerId === currentUser.id || r.transporterId === currentUser.id)
+      );
+   }, [currentUser?.id, currentUser?.role, transportRequests]);
+
+   React.useEffect(() => {
+      if (deliveryPollTimerRef.current) {
+         clearInterval(deliveryPollTimerRef.current);
+         deliveryPollTimerRef.current = null;
+      }
+      if (!supabaseAvailable) return;
+      if (screen !== 'dashboard') return;
+      if (!currentUser || currentUser.role === 'admin') return;
+      if (!hasActiveDeliveryToPoll) return;
+
+      const poll = async () => {
+         if (deliveryPollInFlightRef.current) return;
+         deliveryPollInFlightRef.current = true;
+         try {
+            const [tr, ord] = await Promise.all([
+               svc.getTransportRequests(),
+               svc.getOrders()
+            ]);
+            if (tr) setTransportRequests(tr as any);
+            if (ord) setOrders(ord as any);
+         } catch {
+         } finally {
+            deliveryPollInFlightRef.current = false;
+         }
+      };
+
+      void poll();
+      deliveryPollTimerRef.current = setInterval(() => void poll(), 5000);
+      return () => {
+         if (deliveryPollTimerRef.current) {
+            clearInterval(deliveryPollTimerRef.current);
+            deliveryPollTimerRef.current = null;
+         }
+      };
+   }, [supabaseAvailable, screen, currentUser?.id, currentUser?.role, hasActiveDeliveryToPoll]);
 
    const handleGetStarted = (role: UserRole | null = null, mode: 'login' | 'register' = 'register') => {
       setSelectedRole(role);
@@ -5318,7 +5788,19 @@ const App = () => {
       }
 
       const buyerName = currentUser.profile?.fullName || currentUser.phone || 'Buyer'
-      const buyerLocation = currentUser.profile?.city || ''
+      const buyerProfile: any = currentUser.profile || {}
+      const farmerUser: any = (allUsers || []).find((u: any) => u.id === listing.farmerId)
+      const farmerProfile: any = farmerUser?.profile || {}
+
+      const buyerLocation = String(buyerProfile.defaultDropAddress || buyerProfile.city || '')
+      const farmerLocation = String(farmerProfile.pickupAddress || listing.location || '')
+
+      const distanceKm = (farmerProfile.pickupLat != null && farmerProfile.pickupLng != null && buyerProfile.defaultDropLat != null && buyerProfile.defaultDropLng != null)
+         ? await getOsrmDrivingDistanceKm(
+            { lat: Number(farmerProfile.pickupLat), lng: Number(farmerProfile.pickupLng) },
+            { lat: Number(buyerProfile.defaultDropLat), lng: Number(buyerProfile.defaultDropLng) }
+         )
+         : null
 
       const newOrder: Order = {
          id: `ord_${Date.now()}`,
@@ -5331,10 +5813,11 @@ const App = () => {
          date: new Date().toISOString(),
          farmerName: listing.farmerName,
          farmerId: listing.farmerId,
-         farmerLocation: listing.location,
+         farmerLocation,
          buyerName,
          buyerId: currentUser.id,
-         buyerLocation
+         buyerLocation,
+         distanceKm: distanceKm ?? undefined
       };
 
       try {
@@ -5384,6 +5867,21 @@ const App = () => {
           finalQuantity = offer.quantityRequested || offer.quantity;
       }
 
+      const buyerUser: any = (allUsers || []).find((u: any) => u.id === offer.buyerId)
+      const buyerProfile: any = buyerUser?.profile || {}
+      const farmerUser: any = (allUsers || []).find((u: any) => u.id === listing.farmerId)
+      const farmerProfile: any = farmerUser?.profile || {}
+
+      const buyerLocation = String(buyerProfile.defaultDropAddress || offer.buyerLocation || '')
+      const farmerLocation = String(farmerProfile.pickupAddress || listing.location || '')
+
+      const distanceKm = (farmerProfile.pickupLat != null && farmerProfile.pickupLng != null && buyerProfile.defaultDropLat != null && buyerProfile.defaultDropLng != null)
+         ? await getOsrmDrivingDistanceKm(
+            { lat: Number(farmerProfile.pickupLat), lng: Number(farmerProfile.pickupLng) },
+            { lat: Number(buyerProfile.defaultDropLat), lng: Number(buyerProfile.defaultDropLng) }
+         )
+         : null
+
       const newOrder: Order = {
          id: `ord_${Date.now()}`,
          listingId: listing.id,
@@ -5395,10 +5893,11 @@ const App = () => {
          date: new Date().toISOString(),
          farmerName: listing.farmerName,
          farmerId: listing.farmerId, // Added for RLS
-         farmerLocation: listing.location,
+         farmerLocation,
          buyerName: offer.buyerName,
          buyerId: offer.buyerId, // Added for RLS
-         buyerLocation: offer.buyerLocation
+         buyerLocation,
+         distanceKm: distanceKm ?? undefined
       };
 
       try {
@@ -5899,8 +6398,8 @@ const App = () => {
          {screen === 'admin-login' && <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4"><AdminLogin onLogin={handleAdminLogin} onBack={() => setScreen('landing')} /></div>}
 
          {screen === 'dashboard' && currentUser?.role === 'admin' && <AdminDashboard allUsers={allUsers} listings={listings} orders={orders} disputes={disputes} systemConfig={systemConfig} onUpdateConfig={setSystemConfig} onLogout={handleLogout} onUpdateUserStatus={handleUserStatusChange} onResolveDispute={handleResolveDispute} />}
-        {screen === 'dashboard' && currentUser?.role === 'farmer' && <FarmerDashboard user={currentUser} listings={listings} offers={offers} orders={orders} messages={messages} inventoryItems={inventoryItems} payouts={payouts} transportRequests={transportRequests} allUsers={allUsers} onAddInventoryItem={handleAddInventoryItem} onAddPayout={handleAddPayout} onSendMessage={handleSendMessage} onAddListing={handleAddListing} onUpdateListing={handleUpdateListing} onUpdateListingStatus={handleUpdateListingStatus} onDeleteListing={handleDeleteListing} onAcceptOffer={handleAcceptOffer} onRejectOffer={handleRejectOffer} onCounterOffer={handleCounterOffer} onUpdateProfile={handleUpdateProfile} onRaiseDispute={handleRaiseDispute} onLogout={handleLogout} onAcceptTransportRequest={handleAcceptTransportRequest} onOpenChat={handleOpenChat} onViewInvoice={handleViewInvoice} onUpdateOrderPayment={handleUpdateOrderPayment} />}
-        {screen === 'dashboard' && currentUser?.role === 'buyer' && <BuyerDashboard user={currentUser} listings={listings} offers={offers} orders={orders} messages={messages} rfqs={rfqs} transportRequests={transportRequests} transportBids={transportBids} allUsers={allUsers} onAddRfq={handleAddRfq} onSendMessage={handleSendMessage} onPlaceOffer={handlePlaceOffer} onAcceptOffer={handleAcceptOffer} onCounterOffer={handleCounterOffer} onCancelOffer={handleCancelOffer} onUpdateProfile={handleUpdateProfile} onRaiseDispute={handleRaiseDispute} onLogout={handleLogout} onCreateTransportRequest={handleCreateTransportRequest} onAcceptTransportBid={handleAcceptTransportBid} onCounterTransportBid={handleCounterTransportBid} onUpdateTransportRequest={handleUpdateTransportRequest} onOpenChat={handleOpenChat} onViewInvoice={handleViewInvoice} onUpdateOrderPayment={handleUpdateOrderPayment} onDirectBuy={handleDirectBuy} />}
+        {screen === 'dashboard' && currentUser?.role === 'farmer' && <FarmerDashboard user={currentUser} listings={listings} offers={offers} orders={orders} messages={messages} inventoryItems={inventoryItems} payouts={payouts} transportRequests={transportRequests} allUsers={allUsers} onAddInventoryItem={handleAddInventoryItem} onAddPayout={handleAddPayout} onSendMessage={handleSendMessage} onAddListing={handleAddListing} onUpdateListing={handleUpdateListing} onUpdateListingStatus={handleUpdateListingStatus} onDeleteListing={handleDeleteListing} onAcceptOffer={handleAcceptOffer} onRejectOffer={handleRejectOffer} onCounterOffer={handleCounterOffer} onUpdateProfile={handleUpdateProfile} onRaiseDispute={handleRaiseDispute} onLogout={handleLogout} onAcceptTransportRequest={handleAcceptTransportRequest} onOpenChat={handleOpenChat} onViewInvoice={handleViewInvoice} onUpdateOrderPayment={handleUpdateOrderPayment} onOpenLocationPicker={handleOpenLocationPicker} />}
+        {screen === 'dashboard' && currentUser?.role === 'buyer' && <BuyerDashboard user={currentUser} listings={listings} offers={offers} orders={orders} messages={messages} rfqs={rfqs} transportRequests={transportRequests} transportBids={transportBids} allUsers={allUsers} onAddRfq={handleAddRfq} onSendMessage={handleSendMessage} onPlaceOffer={handlePlaceOffer} onAcceptOffer={handleAcceptOffer} onCounterOffer={handleCounterOffer} onCancelOffer={handleCancelOffer} onUpdateProfile={handleUpdateProfile} onRaiseDispute={handleRaiseDispute} onLogout={handleLogout} onCreateTransportRequest={handleCreateTransportRequest} onAcceptTransportBid={handleAcceptTransportBid} onCounterTransportBid={handleCounterTransportBid} onUpdateTransportRequest={handleUpdateTransportRequest} onOpenChat={handleOpenChat} onViewInvoice={handleViewInvoice} onUpdateOrderPayment={handleUpdateOrderPayment} onDirectBuy={handleDirectBuy} onOpenLocationPicker={handleOpenLocationPicker} />}
         {screen === 'dashboard' && currentUser?.role === 'transporter' && <TransporterDashboard user={currentUser} orders={orders} messages={messages} routePlans={routePlans} transportRequests={transportRequests} transportBids={transportBids} allUsers={allUsers} onAddRoutePlan={handleAddRoutePlan} onSendMessage={handleSendMessage} onRaiseDispute={handleRaiseDispute} onLogout={handleLogout} onUpdateOrderStatus={handleUpdateOrderStatus} onUpdateProfile={handleUpdateProfile} onAddTransportBid={handleAddTransportBid} onUpdateTransportRequestStatus={handleUpdateTransportRequestStatus} onCounterTransportBid={handleCounterTransportBid} onTransporterAcceptBuyerCounter={handleTransporterAcceptBuyerCounter} onOpenChat={handleOpenChat} />}
          
          <ChatDrawer 
@@ -5925,6 +6424,17 @@ const App = () => {
          <InvoiceModal 
             order={invoiceModal.order}
             onClose={() => setInvoiceModal({ open: false, order: null })}
+         />
+         <LocationPicker
+            open={locationPicker.open}
+            title={locationPicker.title}
+            initial={locationPicker.initial}
+            onCancel={() => setLocationPicker({ open: false, title: '' })}
+            onConfirm={(loc) => {
+               locationPickerCallbackRef.current?.(loc);
+               locationPickerCallbackRef.current = null;
+               setLocationPicker({ open: false, title: '' });
+            }}
          />
       </div>
    );

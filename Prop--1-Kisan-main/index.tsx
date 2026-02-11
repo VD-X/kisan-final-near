@@ -2,6 +2,7 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';
 import './index.css';
+import 'leaflet/dist/leaflet.css';
 
 class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean, error: any }> {
   constructor(props: any) {
@@ -55,4 +56,3 @@ if (!rootElement) {
         document.body.innerHTML += `<div style="color:red; background:white; padding:20px;">React Mount Failed: ${e}</div>`;
     }
 }
-

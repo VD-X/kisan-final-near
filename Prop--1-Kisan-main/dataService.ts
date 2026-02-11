@@ -605,6 +605,27 @@ export async function updateTransportRequest(id: string, patch: any) {
   return data
 }
 
+export async function addTransportLocation(payload: { requestId: string; transporterId: string; lat: number; lng: number; heading?: number | null; speedKmph?: number | null; accuracyM?: number | null; createdAt?: string }) {
+  const c = getSupabase(); if (!c) return null
+  const row: any = {
+    requestId: payload.requestId,
+    transporterId: payload.transporterId,
+    lat: payload.lat,
+    lng: payload.lng,
+    heading: payload.heading ?? null,
+    speedKmph: payload.speedKmph ?? null,
+    accuracyM: payload.accuracyM ?? null,
+    createdAt: payload.createdAt ?? new Date().toISOString()
+  }
+  const { data, error } = await c.from('transport_locations').insert(row).select().single()
+  if (error) { console.error('addTransportLocation error', error); throw error }
+  return data
+}
+
+export async function updateTransporterLiveLocation(requestId: string, payload: { transporterId: string; lat: number; lng: number; heading?: number | null; speedKmph?: number | null; accuracyM?: number | null; createdAt?: string }) {
+  return addTransportLocation({ ...payload, requestId })
+}
+
 export async function addTransportBid(payload: any) {
   const c = getSupabase(); if (!c) return null
   const { data, error } = await c.from('transport_bids').insert(payload).select().single()

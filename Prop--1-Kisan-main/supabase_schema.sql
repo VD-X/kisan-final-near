@@ -111,6 +111,12 @@ create table if not exists transport_requests (
   "pickupTime" text,
   "pickupConfirmedAt" timestamp with time zone,
   "deliveryConfirmedAt" timestamp with time zone,
+  "transporterLat" numeric,
+  "transporterLng" numeric,
+  "transporterHeading" numeric,
+  "transporterSpeedKmph" numeric,
+  "transporterAccuracyM" numeric,
+  "transporterLocationUpdatedAt" timestamp with time zone,
   "createdAt" timestamp with time zone default timezone('utc'::text, now())
 );
 
@@ -121,6 +127,18 @@ create table if not exists transport_bids (
   "amount" numeric,
   "message" text,
   "status" text default 'pending',
+  "createdAt" timestamp with time zone default timezone('utc'::text, now())
+);
+
+create table if not exists transport_locations (
+  "id" uuid primary key default gen_random_uuid(),
+  "requestId" text not null references transport_requests("id") on delete cascade,
+  "transporterId" text not null references users("id"),
+  "lat" numeric not null,
+  "lng" numeric not null,
+  "heading" numeric,
+  "speedKmph" numeric,
+  "accuracyM" numeric,
   "createdAt" timestamp with time zone default timezone('utc'::text, now())
 );
 
@@ -287,6 +305,35 @@ CREATE POLICY "Update transport requests" ON transport_requests FOR UPDATE USING
   auth.uid()::text = "buyerId" OR 
   auth.uid()::text = "farmerId" OR 
   auth.uid()::text = "transporterId"
+);
+
+-- 5B. TRANSPORT LOCATIONS (LIVE TRACKING)
+ALTER TABLE transport_locations ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Read transport locations" ON transport_locations;
+DROP POLICY IF EXISTS "Transporter insert location" ON transport_locations;
+
+CREATE POLICY "Read transport locations" ON transport_locations FOR SELECT USING (
+  EXISTS (
+    SELECT 1
+    FROM transport_requests tr
+    WHERE tr."id" = transport_locations."requestId"
+      AND (
+        tr."buyerId" = auth.uid()::text OR
+        tr."farmerId" = auth.uid()::text OR
+        tr."transporterId" = auth.uid()::text
+      )
+  )
+);
+
+CREATE POLICY "Transporter insert location" ON transport_locations FOR INSERT WITH CHECK (
+  auth.uid()::text = transport_locations."transporterId"
+  AND EXISTS (
+    SELECT 1
+    FROM transport_requests tr
+    WHERE tr."id" = transport_locations."requestId"
+      AND tr."transporterId" = auth.uid()::text
+      AND tr."status" IN ('picked_up', 'in_transit')
+  )
 );
 
 -- 6. TRANSPORT BIDS

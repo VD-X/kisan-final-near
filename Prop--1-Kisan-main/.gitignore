@@ -8,6 +8,11 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
+.vite
+.cache
+dist
+coverage
+*.tsbuildinfo
 *.local
 .env
 
@@ -21,3 +26,5 @@ node_modules
 *.njsproj
 *.sln
 *.sw?
+
+testsprite_tests/tmp

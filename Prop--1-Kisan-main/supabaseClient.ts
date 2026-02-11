@@ -4,6 +4,30 @@ let cached: SupabaseClient | null = null
 let resolvedUrl: string | null = null
 let resolvedAnonKey: string | null = null
 
+const DEFAULT_FETCH_TIMEOUT_MS = 15000
+
+function fetchWithTimeout(input: RequestInfo | URL, init?: RequestInit) {
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), DEFAULT_FETCH_TIMEOUT_MS)
+
+  const baseInit: RequestInit = init ? { ...init } : {}
+
+  if (baseInit.signal) {
+    const signalAny = (AbortSignal as any)?.any
+    if (typeof signalAny === 'function') {
+      baseInit.signal = signalAny([baseInit.signal, controller.signal])
+    } else {
+      const originalSignal = baseInit.signal
+      originalSignal.addEventListener('abort', () => controller.abort(), { once: true } as any)
+      baseInit.signal = controller.signal
+    }
+  } else {
+    baseInit.signal = controller.signal
+  }
+
+  return fetch(input, baseInit).finally(() => clearTimeout(timeoutId))
+}
+
 export function getSupabaseConfig() {
   if (!resolvedUrl || !resolvedAnonKey) return null
   return { url: resolvedUrl, anonKey: resolvedAnonKey }
@@ -27,6 +51,6 @@ export function getSupabase(): SupabaseClient | null {
   
   resolvedUrl = url
   resolvedAnonKey = key
-  cached = createClient(url, key)
+  cached = createClient(url, key, { global: { fetch: fetchWithTimeout } })
   return cached
 }

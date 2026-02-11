@@ -310,6 +310,24 @@ export interface TransportRequest {
   pickupConfirmedAt?: string;
   deliveryConfirmedAt?: string;
   totalTimeMinutes?: number;
+  transporterLat?: number;
+  transporterLng?: number;
+  transporterHeading?: number;
+  transporterSpeedKmph?: number;
+  transporterAccuracyM?: number;
+  transporterLocationUpdatedAt?: string;
+  createdAt: string;
+}
+
+export interface TransportLocation {
+  id: string;
+  requestId: string;
+  transporterId: string;
+  lat: number;
+  lng: number;
+  heading?: number;
+  speedKmph?: number;
+  accuracyM?: number;
   createdAt: string;
 }
 

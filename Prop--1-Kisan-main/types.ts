@@ -85,6 +85,7 @@ export interface FarmerProfile {
   addresses?: Address[];
   // Trust Stats
   rating?: number;
+  ratingCount?: number;
   totalSales?: number;
   memberSince?: string;
 }
@@ -111,6 +112,7 @@ export interface BuyerProfile {
   purchaseFrequency?: 'Daily' | 'Weekly' | 'Seasonal';
   // Trust Stats
   rating?: number;
+  ratingCount?: number;
   completedDeals?: number;
   memberSince?: string;
 }
@@ -142,6 +144,12 @@ export interface TransporterProfile {
   language?: string;
   city?: string; // Base Location
   state?: string;
+  baseLat?: number;
+  baseLng?: number;
+  baseAddress?: string;
+  lastLiveLat?: number;
+  lastLiveLng?: number;
+  lastLiveAt?: string;
 
   // Routes & Area
   operatingRegions?: string[]; // Districts/States
@@ -178,9 +186,40 @@ export interface TransporterProfile {
 
   // Trust Stats
   rating?: number;
+  ratingCount?: number;
   totalDeliveries?: number;
   onTimeDeliveryRate?: number; // Percentage
   memberSince?: string;
+}
+
+export type RatingEntityType = 'order' | 'transport_request';
+
+export interface Rating {
+  id: string;
+  fromUserId: string;
+  toUserId: string;
+  entityType: RatingEntityType;
+  entityId: string;
+  stars: 1 | 2 | 3 | 4 | 5;
+  comment?: string;
+  createdAt: string;
+}
+
+export interface MarketPrice {
+  id: string;
+  commodity: string;
+  variety?: string | null;
+  grade?: string | null;
+  state?: string | null;
+  district?: string | null;
+  market?: string | null;
+  arrivalDate?: string | null;
+  minPrice?: number | null;
+  maxPrice?: number | null;
+  modalPrice?: number | null;
+  unit?: string | null;
+  source?: string | null;
+  createdAt?: string | null;
 }
 
 export interface User {
@@ -293,6 +332,10 @@ export interface TransportRequest {
   farmerId: string;
   pickupLocation: string;
   dropLocation: string;
+  pickupLat?: number;
+  pickupLng?: number;
+  dropLat?: number;
+  dropLng?: number;
   weightKg: number;
   vehicleType: 'Bike' | 'Auto' | 'Mini Truck' | 'Pickup' | 'Truck';
   mode: TransportMode;

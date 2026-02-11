@@ -646,3 +646,44 @@ export async function updateTransportBid(id: string, patch: any) {
   if (error) { console.error('updateTransportBid error', error); throw error }
   return data
 }
+
+export async function upsertRating(payload: any) {
+  const c = getSupabase(); if (!c) return null
+  const { data, error } = await c.from('ratings').upsert(payload, { onConflict: 'fromUserId,toUserId,entityType,entityId' }).select().single()
+  if (error) { console.error('upsertRating error', error); throw error }
+  return data
+}
+
+export async function getRatingSummary(toUserId: string) {
+  const c = getSupabase(); if (!c) return { avg: null as number | null, count: 0 }
+  const { data, error } = await c.from('ratings').select('stars').eq('toUserId', toUserId)
+  if (error) { console.error('getRatingSummary error', error); throw error }
+  const rows = (data || []) as any[]
+  const count = rows.length
+  const sum = rows.reduce((s, r) => s + Number(r.stars || 0), 0)
+  const avg = count > 0 ? Math.round((sum / count) * 10) / 10 : null
+  return { avg, count }
+}
+
+export async function upsertMarketPrices(rows: any[]) {
+  const c = getSupabase(); if (!c) return null
+  if (!Array.isArray(rows) || rows.length === 0) return []
+  const { data, error } = await c.from('market_prices').upsert(rows, { onConflict: 'commodity,variety,grade,state,district,market,arrivalDate' }).select()
+  if (error) { console.error('upsertMarketPrices error', error); throw error }
+  return data
+}
+
+export async function getMarketPrices(params: { commodity: string; state?: string; district?: string; market?: string; fromDate?: string; toDate?: string; limit?: number }) {
+  const c = getSupabase(); if (!c) return []
+  const limit = Math.max(1, Math.min(Number(params.limit || 50), 200))
+  let q = c.from('market_prices').select('*').order('arrivalDate', { ascending: false }).limit(limit)
+  q = q.ilike('commodity', params.commodity ? `%${params.commodity}%` : '%')
+  if (params.state) q = q.ilike('state', `%${params.state}%`)
+  if (params.district) q = q.ilike('district', `%${params.district}%`)
+  if (params.market) q = q.ilike('market', `%${params.market}%`)
+  if (params.fromDate) q = q.gte('arrivalDate', params.fromDate)
+  if (params.toDate) q = q.lte('arrivalDate', params.toDate)
+  const { data, error } = await q
+  if (error) { console.error('getMarketPrices error', error); throw error }
+  return data || []
+}

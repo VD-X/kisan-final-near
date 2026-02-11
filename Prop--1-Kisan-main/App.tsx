@@ -93,7 +93,6 @@ import VoiceInput from './components/VoiceInput';
 // import TradeAnimation from './components/TradeAnimation';
 // import HarvestBackground from './components/HarvestBackground';
 import ChooseRole from './components/ChooseRole';
-import { ChatDrawer } from './components/ChatDrawer';
 import { InvoiceModal } from './components/InvoiceModal';
 import { LocationPicker, PickedLocation } from './components/LocationPicker';
 import { RouteMapPreview } from './components/RouteMapPreview';
@@ -661,13 +660,12 @@ const TransporterRegistration = ({ onSubmit }: { onSubmit: (profile: Transporter
 
 // --- 4. DASHBOARDS ---
 
-const FarmerDashboard = ({ user, listings, offers, orders, messages, inventoryItems, payouts, transportRequests, allUsers, onAddInventoryItem, onAddPayout, onSendMessage, onAddListing, onUpdateListing, onDeleteListing, onUpdateProfile, onUpdateListingStatus, onAcceptOffer, onRejectOffer, onCounterOffer, onRaiseDispute, onLogout, onAcceptTransportRequest, onOpenChat, onViewInvoice, onUpdateOrderPayment, onOpenLocationPicker }: any) => {
+const FarmerDashboard = ({ user, listings, offers, orders, inventoryItems, payouts, transportRequests, allUsers, onAddInventoryItem, onAddPayout, onAddListing, onUpdateListing, onDeleteListing, onUpdateProfile, onUpdateListingStatus, onAcceptOffer, onRejectOffer, onCounterOffer, onRaiseDispute, onLogout, onAcceptTransportRequest, onViewInvoice, onUpdateOrderPayment, onOpenLocationPicker, onOpenRating }: any) => {
    const [view, setView] = useState('home');
    const [isSidebarOpen, setIsSidebarOpen] = useState(false);
    const myListings = listings.filter((l: any) => l.farmerId === user.id);
    const myOffers = offers.filter((o: any) => myListings.some((l: any) => l.id === o.listingId));
    const myOrders = (orders || []).filter((o: any) => o?.farmerName === user?.profile?.fullName);
-   const myHistory = MOCK_HISTORY.filter(h => h.type === 'sale'); // Mock history for farmer
 
    const [images, setImages] = useState<string[]>([]);
    const [video, setVideo] = useState<{ url: string; durationSec: number; sizeBytes: number; type: string; thumbnail?: string } | null>(null);
@@ -718,6 +716,22 @@ const FarmerDashboard = ({ user, listings, offers, orders, messages, inventoryIt
       language: user.profile.language || 'English',
       profileVisible: true,
    });
+
+   const [marketPriceQuery, setMarketPriceQuery] = useState<{ commodity: string; state: string; district: string; market: string }>({
+      commodity: '',
+      state: (user.profile.state || '') as any,
+      district: (user.profile.district || '') as any,
+      market: ''
+   });
+   const [marketPriceRows, setMarketPriceRows] = useState<any[]>([]);
+   const [marketPriceLoading, setMarketPriceLoading] = useState(false);
+   const [marketPriceError, setMarketPriceError] = useState<string | null>(null);
+
+   React.useEffect(() => {
+      if (marketPriceQuery.commodity) return;
+      const c = myListings?.[0]?.cropName;
+      if (c) setMarketPriceQuery(prev => ({ ...prev, commodity: c }));
+   }, [myListings.length]);
 
    // Function to handle editing an existing listing
    const handleEditDetail = (listing: any) => {
@@ -997,23 +1011,23 @@ const FarmerDashboard = ({ user, listings, offers, orders, messages, inventoryIt
    const SidebarItem = ({ id, label, icon: Icon, badge }: any) => (
       <button
          onClick={() => { setView(id); setIsSidebarOpen(false); }}
-         className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-all ${view === id ? 'bg-nature-600 text-white shadow-lg shadow-nature-600/30' : 'text-slate-600 hover:bg-slate-100'}`}
+         className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-all ${view === id ? 'bg-white/15 text-white ring-1 ring-white/20 shadow-sm' : 'text-white/85 hover:bg-white/10 hover:text-white'}`}
       >
          <Icon className="w-5 h-5" />
          <span className="flex-1 text-left">{label}</span>
-         {badge > 0 && <span className={`text-xs px-2 py-0.5 rounded-full ${view === id ? 'bg-white/20 text-white' : 'bg-red-100 text-red-600'}`}>{badge}</span>}
+         {badge > 0 && <span className={`text-xs px-2 py-0.5 rounded-full ${view === id ? 'bg-white/20 text-white' : 'bg-white/15 text-white'}`}>{badge}</span>}
       </button>
    );
 
    return (
       <div className="min-h-screen bg-slate-50 flex">
          {/* SIDEBAR - DESKTOP */}
-         <aside className="hidden lg:flex w-64 bg-white border-r border-slate-200 flex-col fixed h-full z-20">
-            <div className="p-6 border-b border-slate-100 flex items-center gap-2">
-               <div className="w-8 h-8 bg-nature-600 rounded-lg flex items-center justify-center shadow-md">
+         <aside className="hidden lg:flex w-64 bg-gradient-to-b from-nature-700 via-nature-700 to-nature-800 border-r border-nature-900/20 flex-col fixed h-full z-20">
+            <div className="p-6 border-b border-white/10 flex items-center gap-2">
+               <div className="w-8 h-8 bg-white/15 border border-white/15 rounded-lg flex items-center justify-center shadow-md">
                   <Leaf className="w-5 h-5 text-white" />
                </div>
-               <span className="font-bold text-xl text-nature-900 tracking-tight">KisanSetu</span>
+               <span className="font-bold text-xl text-white tracking-tight">KisanSetu</span>
             </div>
             <nav className="p-4 space-y-2 flex-1 overflow-y-auto">
                <SidebarItem id="home" label="Dashboard" icon={LayoutDashboard} />
@@ -1022,17 +1036,16 @@ const FarmerDashboard = ({ user, listings, offers, orders, messages, inventoryIt
                <SidebarItem id="orders" label="Orders" icon={Truck} badge={myOrders.length} />
                <SidebarItem id="inventory" label="Inventory" icon={Package} />
                <SidebarItem id="payments" label="Payments" icon={IndianRupee} />
-               <SidebarItem id="history" label="History & Insights" icon={FileClock} />
-               <SidebarItem id="messages" label="Messages" icon={MessageCircle} />
+               <SidebarItem id="prices" label="Market Prices" icon={TrendingUp} />
+               <SidebarItem id="analytics" label="Analytics" icon={BarChart3} />
                <SidebarItem id="addresses" label="Addresses" icon={MapPin} />
-               <SidebarItem id="more" label="Pro Features" icon={Settings} />
                <SidebarItem id="profile" label="Kisan Profile" icon={UserIcon} />
                <SidebarItem id="notifications" label="Notifications" icon={Bell} badge={2} />
                <SidebarItem id="help" label="Help & Support" icon={Info} />
                <SidebarItem id="settings" label="Settings" icon={Settings} />
             </nav>
-            <div className="p-4 border-t border-slate-100">
-               <button onClick={onLogout} className="w-full flex items-center gap-3 px-4 py-3 rounded-xl font-medium text-slate-600 hover:bg-red-50 hover:text-red-600 transition-colors">
+            <div className="p-4 border-t border-white/10">
+               <button onClick={onLogout} className="w-full flex items-center gap-3 px-4 py-3 rounded-xl font-medium text-white/85 hover:bg-white/10 hover:text-white transition-colors">
                   <LogOut className="w-5 h-5" /> Logout
                </button>
             </div>
@@ -1041,10 +1054,10 @@ const FarmerDashboard = ({ user, listings, offers, orders, messages, inventoryIt
          {/* MOBILE DRAWER */}
          {isSidebarOpen && (
             <div className="fixed inset-0 z-50 lg:hidden bg-black/50 backdrop-blur-sm" onClick={() => setIsSidebarOpen(false)}>
-               <div className="w-3/4 max-w-xs bg-white h-full shadow-2xl p-4 flex flex-col" onClick={e => e.stopPropagation()}>
+               <div className="w-3/4 max-w-xs bg-gradient-to-b from-nature-700 via-nature-700 to-nature-800 h-full shadow-2xl p-4 flex flex-col text-white" onClick={e => e.stopPropagation()}>
                   <div className="flex justify-between items-center mb-6">
-                     <span className="font-bold text-xl text-nature-900">Menu</span>
-                     <button onClick={() => setIsSidebarOpen(false)} className="p-2 bg-slate-100 rounded-full"><X className="w-5 h-5" /></button>
+                     <span className="font-bold text-xl text-white">Menu</span>
+                     <button onClick={() => setIsSidebarOpen(false)} className="p-2 bg-white/15 border border-white/15 rounded-full"><X className="w-5 h-5" /></button>
                   </div>
                   <nav className="space-y-2 flex-1 overflow-y-auto pr-2">
                      <SidebarItem id="home" label="Dashboard" icon={LayoutDashboard} />
@@ -1053,13 +1066,14 @@ const FarmerDashboard = ({ user, listings, offers, orders, messages, inventoryIt
                      <SidebarItem id="orders" label="Orders" icon={Truck} badge={myOrders.length} />
                      <SidebarItem id="inventory" label="Inventory" icon={Package} />
                      <SidebarItem id="payments" label="Payments" icon={IndianRupee} />
-                     <SidebarItem id="history" label="History & Insights" icon={FileClock} />
+                     <SidebarItem id="prices" label="Market Prices" icon={TrendingUp} />
+                     <SidebarItem id="analytics" label="Analytics" icon={BarChart3} />
                      <SidebarItem id="profile" label="Kisan Profile" icon={UserIcon} />
                      <SidebarItem id="notifications" label="Notifications" icon={Bell} badge={2} />
                      <SidebarItem id="help" label="Help & Support" icon={Info} />
                      <SidebarItem id="settings" label="Settings" icon={Settings} />
                   </nav>
-                  <button onClick={onLogout} className="w-full flex items-center gap-3 px-4 py-3 rounded-xl font-medium text-red-600 bg-red-50">
+                  <button onClick={onLogout} className="w-full flex items-center gap-3 px-4 py-3 rounded-xl font-medium bg-white/15 border border-white/15 text-white">
                      <LogOut className="w-5 h-5" /> Logout
                   </button>
                </div>
@@ -1172,6 +1186,94 @@ const FarmerDashboard = ({ user, listings, offers, orders, messages, inventoryIt
                      </Card>
                   </div>
                )}
+
+               {view === 'prices' && (
+                  <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                     <div>
+                        <h2 className="text-2xl font-black text-slate-900">Market Prices</h2>
+                        <p className="text-slate-500">Daily mandi prices uploaded from government sources</p>
+                     </div>
+                     <Card className="p-6 space-y-4">
+                        <div className="grid md:grid-cols-4 gap-4">
+                           <Input label="Commodity" placeholder="e.g. Wheat, Onion" value={marketPriceQuery.commodity} onChange={(e) => setMarketPriceQuery(prev => ({ ...prev, commodity: e.target.value }))} />
+                           <Input label="State" placeholder="e.g. Madhya Pradesh" value={marketPriceQuery.state} onChange={(e) => setMarketPriceQuery(prev => ({ ...prev, state: e.target.value }))} />
+                           <Input label="District" placeholder="e.g. Bhopal" value={marketPriceQuery.district} onChange={(e) => setMarketPriceQuery(prev => ({ ...prev, district: e.target.value }))} />
+                           <Input label="Market (optional)" placeholder="e.g. Sehore" value={marketPriceQuery.market} onChange={(e) => setMarketPriceQuery(prev => ({ ...prev, market: e.target.value }))} />
+                        </div>
+                        {marketPriceError && (
+                           <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-sm font-bold">{marketPriceError}</div>
+                        )}
+                        <div className="flex gap-3 flex-wrap">
+                           <Button className="bg-nature-600 hover:bg-nature-700 font-black" disabled={marketPriceLoading || !marketPriceQuery.commodity} onClick={async () => {
+                              try {
+                                 setMarketPriceError(null);
+                                 setMarketPriceLoading(true);
+                                 const rows = await svc.getMarketPrices({
+                                    commodity: marketPriceQuery.commodity,
+                                    state: marketPriceQuery.state || undefined,
+                                    district: marketPriceQuery.district || undefined,
+                                    market: marketPriceQuery.market || undefined,
+                                    limit: 50
+                                 });
+                                 setMarketPriceRows(rows || []);
+                                 if (!rows || rows.length === 0) setMarketPriceError('No price records found yet. Ask Admin to upload the latest mandi price file.');
+                              } catch (e: any) {
+                                 setMarketPriceError(String(e?.message || e || 'Failed to load prices.'));
+                              } finally {
+                                 setMarketPriceLoading(false);
+                              }
+                           }}>
+                              {marketPriceLoading ? 'Loading...' : 'Fetch Latest'}
+                           </Button>
+                           <Button variant="outline" className="font-black border-slate-200 text-slate-700" onClick={() => { setMarketPriceRows([]); setMarketPriceError(null); }}>
+                              Clear
+                           </Button>
+                        </div>
+                        <div className="text-xs text-slate-500 font-bold">Tip: Set your State/District in profile for better default results.</div>
+                     </Card>
+
+                     <Card className="p-0 overflow-hidden border-slate-200">
+                        <div className="p-4 bg-slate-50 border-b border-slate-100 flex items-center justify-between">
+                           <div className="font-black text-slate-900">Latest Records</div>
+                           <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Showing {marketPriceRows.length}</div>
+                        </div>
+                        {marketPriceRows.length === 0 ? (
+                           <div className="p-10 text-center text-slate-400 font-bold text-sm">No price data loaded yet.</div>
+                        ) : (
+                           <div className="overflow-x-auto">
+                              <table className="w-full text-left text-sm">
+                                 <thead className="bg-white border-b border-slate-100 text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                                    <tr>
+                                       <th className="px-6 py-4">Date</th>
+                                       <th className="px-6 py-4">Market</th>
+                                       <th className="px-6 py-4">Commodity</th>
+                                       <th className="px-6 py-4">Variety</th>
+                                       <th className="px-6 py-4 text-right">Min</th>
+                                       <th className="px-6 py-4 text-right">Max</th>
+                                       <th className="px-6 py-4 text-right">Modal</th>
+                                       <th className="px-6 py-4">Unit</th>
+                                    </tr>
+                                 </thead>
+                                 <tbody className="divide-y divide-slate-50">
+                                    {marketPriceRows.map((r: any) => (
+                                       <tr key={r.id} className="hover:bg-slate-50 transition-colors">
+                                          <td className="px-6 py-4 text-slate-600 font-bold">{r.arrivalDate || '—'}</td>
+                                          <td className="px-6 py-4 text-slate-700 font-bold">{[r.market, r.district, r.state].filter(Boolean).join(', ')}</td>
+                                          <td className="px-6 py-4 font-black text-slate-900">{r.commodity}</td>
+                                          <td className="px-6 py-4 text-slate-600 font-bold">{r.variety || '—'}</td>
+                                          <td className="px-6 py-4 text-right font-black text-slate-900">₹{Number(r.minPrice || 0).toLocaleString()}</td>
+                                          <td className="px-6 py-4 text-right font-black text-slate-900">₹{Number(r.maxPrice || 0).toLocaleString()}</td>
+                                          <td className="px-6 py-4 text-right font-black text-nature-700">₹{Number(r.modalPrice || 0).toLocaleString()}</td>
+                                          <td className="px-6 py-4 text-slate-600 font-bold">{r.unit || '—'}</td>
+                                       </tr>
+                                    ))}
+                                 </tbody>
+                              </table>
+                           </div>
+                        )}
+                     </Card>
+                  </div>
+               )}
                {/* ===== NOTIFICATIONS VIEW ===== */}
                {view === 'notifications' && (
                   <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -1213,31 +1315,6 @@ const FarmerDashboard = ({ user, listings, offers, orders, messages, inventoryIt
                      </div>
                      <Card className="overflow-hidden"><div className="p-4 border-b border-slate-100 bg-slate-50"><h3 className="font-bold text-slate-800">Frequently Asked Questions</h3></div><div className="divide-y divide-slate-100">{FAQ_DATA.map((faq, i) => (<div key={i} className="cursor-pointer" onClick={() => setExpandedFaq(expandedFaq === i ? null : i)}><div className="p-4 flex items-center justify-between hover:bg-slate-50 transition-colors"><span className="font-medium text-slate-800">{faq.q}</span><ChevronDown className={`w-5 h-5 text-slate-400 transition-transform ${expandedFaq === i ? 'rotate-180' : ''}`} /></div>{expandedFaq === i && <div className="px-4 pb-4 text-sm text-slate-600 bg-slate-50">{faq.a}</div>}</div>))}</div></Card>
                      <Card className="p-6"><h3 className="font-bold text-slate-800 mb-4">Submit a Support Request</h3><div className="space-y-4"><div className="grid md:grid-cols-2 gap-4"><Input label="Your Name" value={supportForm.name} onChange={e => setSupportForm({ ...supportForm, name: e.target.value })} /><Input label="Email" type="email" value={supportForm.email} onChange={e => setSupportForm({ ...supportForm, email: e.target.value })} placeholder="your@email.com" /></div><div className="space-y-1"><label className="text-xs font-bold text-slate-500 uppercase">Describe Your Issue</label><textarea className="w-full h-32 bg-white border border-slate-300 rounded-xl p-3 outline-none focus:ring-2 focus:ring-nature-500 resize-none" placeholder="Tell us how we can help..." value={supportForm.issue} onChange={e => setSupportForm({ ...supportForm, issue: e.target.value })}></textarea></div><Button className="w-full md:w-auto" disabled={!supportForm.email || !supportForm.issue}><Send className="w-4 h-4 mr-2" /> Submit Request</Button></div></Card>
-                  </div>
-               )}
-               {/* ===== PRO FEATURES HUB ===== */}
-               {view === 'more' && (
-                  <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-                     <div><h2 className="text-2xl font-black text-slate-900">Pro Features</h2><p className="text-slate-500">Explore upcoming advanced tools for farmers.</p></div>
-                     <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
-                        {[
-                           { title: 'Inventory Management', desc: 'Batch lots, grading, storage tracking' },
-                           { title: 'Dynamic Pricing', desc: 'Auto-adjust price by age/demand' },
-                           { title: 'Order Fulfillment', desc: 'Pick-pack-ship, POD, labels' },
-                           { title: 'Payments & Settlements', desc: 'Payout ledger and statuses' },
-                           { title: 'Contracts & Compliance', desc: 'Digital MoUs, renewals' },
-                           { title: 'Seasonal Planning', desc: 'Crop calendar and yield estimates' },
-                           { title: 'Bulk Updates', desc: 'Multi-listing edits and scheduling' },
-                           { title: 'Marketing Boosts', desc: 'Featured credits and sharing' },
-                           { title: 'Logistics Coordination', desc: 'Preferred transporters and slots' }
-                        ].map((f, i) => (
-                           <Card key={i} className="p-5">
-                              <h4 className="font-bold text-slate-900">{f.title}</h4>
-                              <p className="text-sm text-slate-600">{f.desc}</p>
-                              <div className="mt-3"><Button variant="outline" className="text-xs">Coming Soon</Button></div>
-                           </Card>
-                        ))}
-                     </div>
                   </div>
                )}
                {/* ===== SETTINGS VIEW ===== */}
@@ -1489,12 +1566,6 @@ const FarmerDashboard = ({ user, listings, offers, orders, messages, inventoryIt
                                        <div className="flex items-center gap-1 mt-2">
                                           {[1, 2, 3, 4, 5].map(i => <Star key={i} className="w-2 h-2 text-yellow-500 fill-yellow-500" />)}
                                        </div>
-                                       <button 
-                                          onClick={() => onOpenChat(buyer?.id || '', o.buyerName, o.listingId, undefined, o.id)}
-                                          className="mt-3 px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-full text-[10px] font-bold flex items-center gap-1 transition-colors"
-                                       >
-                                          <MessageCircle className="w-3 h-3" /> Chat
-                                       </button>
                                     </div>
                                     <div className="flex-1 p-6 md:p-8">
                                        <div className="flex flex-wrap justify-between items-start gap-6 mb-6">
@@ -1622,6 +1693,36 @@ const FarmerDashboard = ({ user, listings, offers, orders, messages, inventoryIt
                                           <CreditCard className="w-4 h-4 mr-2" /> Verify Payment
                                        </Button>
                                     )}
+                                    {o.status === 'delivered' && (
+                                       <>
+                                          <Button
+                                             variant="outline"
+                                             size="sm"
+                                             className="h-9 text-xs font-bold"
+                                             onClick={() => {
+                                                const buyerId = o.buyerId || (allUsers || []).find((u: any) => u.profile?.fullName === o.buyerName)?.id || '';
+                                                if (!buyerId) return;
+                                                onOpenRating?.({ toUserId: buyerId, toUserName: o.buyerName || 'Buyer', entityType: 'order', entityId: o.id });
+                                             }}
+                                          >
+                                             Rate Buyer
+                                          </Button>
+                                          {req?.transporterId && (
+                                             <Button
+                                                variant="outline"
+                                                size="sm"
+                                                className="h-9 text-xs font-bold"
+                                                onClick={() => {
+                                                   const toUserId = String(req.transporterId || '');
+                                                   const toUserName = (allUsers || []).find((u: any) => u.id === toUserId)?.profile?.fullName || 'Transporter';
+                                                   onOpenRating?.({ toUserId, toUserName, entityType: 'transport_request', entityId: req.id });
+                                                }}
+                                             >
+                                                Rate Transporter
+                                             </Button>
+                                          )}
+                                       </>
+                                    )}
                                  </div>
                               </div>
 
@@ -1696,81 +1797,177 @@ const FarmerDashboard = ({ user, listings, offers, orders, messages, inventoryIt
                )}
 
                {/* 9. HISTORY & INSIGHTS */}
-               {view === 'history' && (
+               {view === 'analytics' && (
                   <div className="space-y-8 animate-in slide-in-from-right-4">
-                     <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                        <div>
-                           <h2 className="text-2xl md:text-3xl font-bold text-slate-900">Sales History</h2>
-                           <p className="text-sm text-slate-500 font-medium">Your seasonal performance summary and earnings</p>
-                        </div>
-                        <div className="flex gap-3">
-                           <button className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-50 transition-colors"><Filter className="w-4 h-4" /> Filter Season</button>
-                           <button className="flex items-center gap-2 px-4 py-2 bg-slate-900 text-white rounded-xl text-xs font-bold shadow-lg shadow-slate-900/10 hover:bg-slate-800 transition-colors"><Download className="w-4 h-4" /> Export Ledger</button>
-                        </div>
-                     </div>
+                     {(() => {
+                        const delivered = myOrders.filter((o: any) => o.status === 'delivered');
+                        const inTransit = myOrders.filter((o: any) => o.status === 'in_transit' || o.status === 'picked_up');
+                        const totalRevenue = delivered.reduce((sum: number, o: any) => sum + Number(o.totalAmount || 0), 0);
+                        const totalQty = delivered.reduce((sum: number, o: any) => sum + Number(o.quantity || 0), 0);
+                        const avgPrice = totalQty > 0 ? Math.round(totalRevenue / totalQty) : 0;
+                        const uniqueBuyers = new Set(delivered.map((o: any) => String(o.buyerId || o.buyerName || ''))).size;
 
-                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-                        <Card className="p-6 border-nature-100 bg-nature-50/10 relative overflow-hidden group">
-                           <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:scale-125 transition-transform"><DollarSign className="w-20 h-20 text-nature-600" /></div>
-                           <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Seasonal Earnings</div>
-                           <div className="text-3xl font-black text-slate-900 tracking-tighter">₹{myHistory.reduce((a, b) => a + b.amount, 0).toLocaleString()}</div>
-                           <div className="text-[10px] text-green-600 font-black mt-2 flex items-center gap-1 uppercase tracking-tighter"><TrendingUp className="w-3 h-3" /> +12% Compared to 2023</div>
-                        </Card>
-                        <Card className="p-6 border-blue-100 bg-blue-50/10 relative overflow-hidden group">
-                           <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:scale-125 transition-transform"><Package className="w-20 h-20 text-blue-600" /></div>
-                           <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Stock Sold</div>
-                           <div className="text-3xl font-black text-slate-900 tracking-tighter">{myHistory.reduce((a, b) => a + (b.quantity || 0), 0)} <span className="text-lg font-bold text-slate-400 uppercase">kg</span></div>
-                           <div className="text-[10px] text-blue-600 font-black mt-2 flex items-center gap-1 uppercase tracking-tighter"><Package className="w-3 h-3" /> High Demand Season</div>
-                        </Card>
-                        <Card className="p-6 border-orange-100 bg-orange-50/10 relative overflow-hidden group">
-                           <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:scale-125 transition-transform"><Briefcase className="w-20 h-20 text-orange-600" /></div>
-                           <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Avg. Sale Price</div>
-                           <div className="text-3xl font-black text-slate-900 tracking-tighter">₹32<span className="text-lg font-bold text-slate-400">/kg</span></div>
-                           <div className="text-[10px] text-orange-600 font-black mt-2 flex items-center gap-1 uppercase tracking-tighter"><ShieldCheck className="w-3 h-3" /> 15% Above MSP</div>
-                        </Card>
-                        <Card className="p-6 border-purple-100 bg-purple-50/10 relative overflow-hidden group">
-                           <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:scale-125 transition-transform"><UserIcon className="w-20 h-20 text-purple-600" /></div>
-                           <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Buyer Trust</div>
-                           <div className="text-3xl font-black text-slate-900 tracking-tighter">4.9<span className="text-lg font-bold text-slate-400">/5</span></div>
-                           <div className="text-[10px] text-purple-600 font-black mt-2 flex items-center gap-1 uppercase tracking-tighter"><Star className="w-3 h-3 fill-purple-600" /> Top Rated Farmer</div>
-                        </Card>
-                     </div>
+                        const parseOrderDateMs = (o: any) => {
+                           const t1 = Date.parse(String(o.date || ''));
+                           if (Number.isFinite(t1)) return t1;
+                           const t2 = Date.parse(String(o.createdAt || ''));
+                           return Number.isFinite(t2) ? t2 : NaN;
+                        };
 
-                     <Card className="overflow-hidden border-slate-200">
-                        <div className="p-6 bg-slate-50 border-b border-slate-200 flex justify-between items-center">
-                           <h3 className="font-bold text-slate-800">Recent Transactions</h3>
-                           <button className="text-xs font-black text-nature-600 hover:underline uppercase tracking-widest">View Full Statement</button>
-                        </div>
-                        <div className="overflow-x-auto">
-                           <table className="w-full text-left">
-                              <thead>
-                                 <tr className="bg-white border-b border-slate-100 text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                                    <th className="px-6 py-4">Transaction Details</th>
-                                    <th className="px-6 py-4">Quantity</th>
-                                    <th className="px-6 py-4">Price/kg</th>
-                                    <th className="px-6 py-4">Total Amount</th>
-                                    <th className="px-6 py-4">Status</th>
-                                 </tr>
-                              </thead>
-                              <tbody>
-                                 {myHistory.map((h, i) => (
-                                    <tr key={h.id} className="hover:bg-slate-50 transition-colors border-b border-slate-50">
-                                       <td className="px-6 py-5">
-                                          <div className="font-bold text-slate-800">{h.itemName}</div>
-                                          <div className="text-[10px] text-slate-400 font-bold">{h.date} • {h.type}</div>
-                                       </td>
-                                       <td className="px-6 py-5 font-bold text-slate-700">{h.quantity} kg</td>
-                                       <td className="px-6 py-5 font-bold text-slate-700">₹{h.quantity ? Math.round(h.amount / h.quantity) : '–'}/kg</td>
-                                       <td className="px-6 py-5 font-black text-nature-700">₹{h.amount.toLocaleString()}</td>
-                                       <td className="px-6 py-5">
-                                          <span className="px-2 py-1 bg-green-50 text-green-700 rounded text-[9px] font-black uppercase tracking-wider border border-green-100">Settled</span>
-                                       </td>
-                                    </tr>
-                                 ))}
-                              </tbody>
-                           </table>
-                        </div>
-                     </Card>
+                        const now = Date.now();
+                        const last7 = delivered.filter((o: any) => {
+                           const t = parseOrderDateMs(o);
+                           return Number.isFinite(t) && (now - t) <= 7 * 24 * 60 * 60 * 1000;
+                        });
+                        const revenue7 = last7.reduce((sum: number, o: any) => sum + Number(o.totalAmount || 0), 0);
+
+                        const byCrop = delivered.reduce((acc: any, o: any) => {
+                           const key = String(o.cropName || 'Crop');
+                           const qty = Number(o.quantity || 0);
+                           const amt = Number(o.totalAmount || 0);
+                           acc[key] = acc[key] || { qty: 0, amt: 0, orders: 0 };
+                           acc[key].qty += qty;
+                           acc[key].amt += amt;
+                           acc[key].orders += 1;
+                           return acc;
+                        }, {});
+                        const topCrops = Object.entries(byCrop)
+                           .map(([crop, v]: any) => ({ crop, qty: v.qty, amt: v.amt, orders: v.orders }))
+                           .sort((a: any, b: any) => b.amt - a.amt)
+                           .slice(0, 5);
+
+                        const byDay = delivered.reduce((acc: any, o: any) => {
+                           const t = parseOrderDateMs(o);
+                           if (!Number.isFinite(t)) return acc;
+                           const d = new Date(t);
+                           const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+                           acc[key] = (acc[key] || 0) + Number(o.totalAmount || 0);
+                           return acc;
+                        }, {});
+                        const series = Object.entries(byDay)
+                           .sort((a: any, b: any) => String(a[0]).localeCompare(String(b[0])))
+                           .slice(-7) as [string, number][];
+                        const maxDay = series.reduce((m, x) => Math.max(m, Number(x[1]) || 0), 0) || 1;
+
+                        const recent = [...delivered]
+                           .sort((a: any, b: any) => (parseOrderDateMs(b) || 0) - (parseOrderDateMs(a) || 0))
+                           .slice(0, 15);
+
+                        return (
+                           <>
+                              <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                                 <div>
+                                    <h2 className="text-2xl md:text-3xl font-bold text-slate-900">Analytics</h2>
+                                    <p className="text-sm text-slate-500 font-medium">Real performance from your completed orders</p>
+                                 </div>
+                                 <div className="flex gap-3">
+                                    <button className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-50 transition-colors"><Download className="w-4 h-4" /> Export (Soon)</button>
+                                 </div>
+                              </div>
+
+                              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+                                 <Card className="p-6 border-nature-100 bg-white">
+                                    <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Delivered Orders</div>
+                                    <div className="text-3xl font-black text-slate-900 tracking-tighter">{delivered.length}</div>
+                                 </Card>
+                                 <Card className="p-6 border-blue-100 bg-white">
+                                    <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">In Transit</div>
+                                    <div className="text-3xl font-black text-slate-900 tracking-tighter">{inTransit.length}</div>
+                                 </Card>
+                                 <Card className="p-6 border-emerald-100 bg-white">
+                                    <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Revenue</div>
+                                    <div className="text-3xl font-black text-slate-900 tracking-tighter">₹{totalRevenue.toLocaleString()}</div>
+                                    <div className="text-[10px] text-slate-500 font-bold mt-2 uppercase tracking-widest">Last 7 days: ₹{revenue7.toLocaleString()}</div>
+                                 </Card>
+                                 <Card className="p-6 border-purple-100 bg-white">
+                                    <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Avg Price</div>
+                                    <div className="text-3xl font-black text-slate-900 tracking-tighter">₹{avgPrice}<span className="text-lg font-bold text-slate-400">/kg</span></div>
+                                    <div className="text-[10px] text-slate-500 font-bold mt-2 uppercase tracking-widest">Unique buyers: {uniqueBuyers}</div>
+                                 </Card>
+                              </div>
+
+                              <div className="grid md:grid-cols-2 gap-6">
+                                 <Card className="p-6">
+                                    <div className="flex items-center justify-between mb-5">
+                                       <div className="font-black text-slate-900">Last 7 days revenue</div>
+                                       <div className="text-xs font-bold text-slate-400 uppercase tracking-widest">Delivered</div>
+                                    </div>
+                                    {series.length === 0 ? (
+                                       <div className="py-10 text-center text-slate-400 font-bold text-sm">No delivered orders yet.</div>
+                                    ) : (
+                                       <div className="space-y-3">
+                                          {series.map(([day, amt]) => (
+                                             <div key={day} className="flex items-center gap-3">
+                                                <div className="w-24 text-[10px] font-black text-slate-500">{day.slice(5)}</div>
+                                                <div className="flex-1 h-3 bg-slate-100 rounded-full overflow-hidden">
+                                                   <div className="h-full bg-nature-600" style={{ width: `${Math.max(4, Math.round((Number(amt || 0) / maxDay) * 100))}%` }} />
+                                                </div>
+                                                <div className="w-24 text-right text-xs font-black text-slate-900">₹{Number(amt || 0).toLocaleString()}</div>
+                                             </div>
+                                          ))}
+                                       </div>
+                                    )}
+                                 </Card>
+
+                                 <Card className="p-6">
+                                    <div className="font-black text-slate-900 mb-5">Top Crops (by revenue)</div>
+                                    {topCrops.length === 0 ? (
+                                       <div className="py-10 text-center text-slate-400 font-bold text-sm">No sales yet.</div>
+                                    ) : (
+                                       <div className="space-y-3">
+                                          {topCrops.map((x: any) => (
+                                             <div key={x.crop} className="p-4 bg-slate-50 rounded-2xl border border-slate-200 flex items-center justify-between gap-4">
+                                                <div className="min-w-0">
+                                                   <div className="font-black text-slate-900 truncate">{x.crop}</div>
+                                                   <div className="text-xs font-bold text-slate-500">{x.orders} orders • {Number(x.qty || 0)} kg</div>
+                                                </div>
+                                                <div className="text-right">
+                                                   <div className="font-black text-slate-900">₹{Number(x.amt || 0).toLocaleString()}</div>
+                                                   <div className="text-[10px] font-bold text-slate-400">₹{x.qty ? Math.round(Number(x.amt || 0) / Number(x.qty || 1)) : 0}/kg</div>
+                                                </div>
+                                             </div>
+                                          ))}
+                                       </div>
+                                    )}
+                                 </Card>
+                              </div>
+
+                              <Card className="overflow-hidden border-slate-200">
+                                 <div className="p-6 bg-slate-50 border-b border-slate-200 flex justify-between items-center">
+                                    <h3 className="font-bold text-slate-800">Recent Delivered Orders</h3>
+                                    <div className="text-xs font-bold text-slate-400 uppercase tracking-widest">Showing {recent.length}</div>
+                                 </div>
+                                 <div className="overflow-x-auto">
+                                    <table className="w-full text-left">
+                                       <thead>
+                                          <tr className="bg-white border-b border-slate-100 text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                                             <th className="px-6 py-4">Order</th>
+                                             <th className="px-6 py-4">Buyer</th>
+                                             <th className="px-6 py-4">Quantity</th>
+                                             <th className="px-6 py-4">Price/kg</th>
+                                             <th className="px-6 py-4">Total</th>
+                                             <th className="px-6 py-4">Date</th>
+                                          </tr>
+                                       </thead>
+                                       <tbody>
+                                          {recent.map((o: any) => (
+                                             <tr key={o.id} className="hover:bg-slate-50 transition-colors border-b border-slate-50">
+                                                <td className="px-6 py-5 font-black text-slate-800">#{o.id} • {o.cropName}</td>
+                                                <td className="px-6 py-5 font-bold text-slate-700">{o.buyerName}</td>
+                                                <td className="px-6 py-5 font-bold text-slate-700">{Number(o.quantity || 0)} kg</td>
+                                                <td className="px-6 py-5 font-bold text-slate-700">₹{o.quantity ? Math.round(Number(o.totalAmount || 0) / Number(o.quantity || 1)) : '—'}/kg</td>
+                                                <td className="px-6 py-5 font-black text-nature-700">₹{Number(o.totalAmount || 0).toLocaleString()}</td>
+                                                <td className="px-6 py-5 text-xs font-bold text-slate-500">{o.date ? String(o.date) : '—'}</td>
+                                             </tr>
+                                          ))}
+                                       </tbody>
+                                    </table>
+                                    {recent.length === 0 && <div className="py-12 text-center text-slate-400 text-xs font-bold">No delivered orders yet.</div>}
+                                 </div>
+                              </Card>
+                           </>
+                        );
+                     })()}
                   </div>
                )}
 
@@ -2541,7 +2738,7 @@ const FarmerDashboard = ({ user, listings, offers, orders, messages, inventoryIt
 };
 
 // Buyer and Transporter Dashboards remain the same
-const BuyerDashboard = ({ user, listings, offers, orders, messages, rfqs, transportRequests, transportBids, allUsers, onAddRfq, onSendMessage, onPlaceOffer, onAcceptOffer, onCounterOffer, onCancelOffer, onLogout, onUpdateProfile, onRaiseDispute, onCreateTransportRequest, onAcceptTransportBid, onCounterTransportBid, onUpdateTransportRequest, onOpenChat, onViewInvoice, onUpdateOrderPayment, onDirectBuy, onOpenLocationPicker }: any) => {
+const BuyerDashboard = ({ user, listings, offers, orders, rfqs, transportRequests, transportBids, allUsers, onAddRfq, onPlaceOffer, onAcceptOffer, onCounterOffer, onCancelOffer, onLogout, onUpdateProfile, onRaiseDispute, onCreateTransportRequest, onAcceptTransportBid, onCounterTransportBid, onUpdateTransportRequest, onViewInvoice, onUpdateOrderPayment, onDirectBuy, onOpenLocationPicker, onOpenRating }: any) => {
    const [view, setView] = useState('home');
    const [searchTerm, setSearchTerm] = useState('');
    const [selectedListing, setSelectedListing] = useState<any>(null);
@@ -2732,9 +2929,7 @@ const BuyerDashboard = ({ user, listings, offers, orders, messages, rfqs, transp
                      { id: 'rfq', label: 'RFQ', icon: FileText },
                      { id: 'shortlists', label: 'Shortlists', icon: Package },
                      { id: 'analytics', label: 'Analytics', icon: FileClock },
-                  { id: 'messages', label: 'Messages', icon: MessageCircle },
                   { id: 'addresses', label: 'Addresses', icon: MapPin },
-                  { id: 'more', label: 'Pro Features', icon: Settings },
                   { id: 'profile', label: 'My Profile', icon: UserIcon },
                   { id: 'notifications', label: 'Notifications', icon: Bell, badge: notifications.filter((n: any) => !n.isRead).length },
                   { id: 'help', label: 'Help & Support', icon: HelpCircle },
@@ -3080,11 +3275,6 @@ const BuyerDashboard = ({ user, listings, offers, orders, messages, rfqs, transp
                                              {farmerUser?.profile?.city ? `${(farmerUser.profile as any).city}, ` : ''}{farmerUser?.profile?.state ? (farmerUser.profile as any).state : ''}
                                           </div>
                                        </div>
-                                       <Button variant="outline" className="h-10 text-xs font-black border-slate-200" onClick={() => {
-                                          const toUserId = selectedListing.farmerId;
-                                          onSendMessage?.({ toUserId, text: `Hi ${selectedListing.farmerName}, I'm interested in ${selectedListing.cropName}.`, listingId: selectedListing.id });
-                                          setView('messages');
-                                       }}>Message</Button>
                                     </div>
                                  </Card>
                               </div>
@@ -3283,9 +3473,6 @@ const BuyerDashboard = ({ user, listings, offers, orders, messages, rfqs, transp
                            
                            {o.status === 'pending' && (
                                <div className="mt-4 pt-4 border-t border-slate-100 flex gap-3 justify-end">
-                                   <Button variant="outline" className="text-xs font-bold text-blue-600 hover:bg-blue-50 border-blue-200" onClick={() => onOpenChat(listing?.farmerId || '', listing?.farmerName || '', o.listingId, undefined, o.id)}>
-                                       <MessageCircle className="w-4 h-4 mr-2" /> Chat
-                                   </Button>
                                    <Button variant="outline" className="text-xs font-bold text-red-500 hover:bg-red-50 hover:text-red-600 border-slate-200" onClick={() => onCancelOffer(o.id)}>Cancel Negotiation</Button>
                                    {isCounterByFarmer && (
                                        <>
@@ -3494,6 +3681,34 @@ const BuyerDashboard = ({ user, listings, offers, orders, messages, rfqs, transp
                                     <Button variant="outline" className="h-8 text-xs font-bold text-blue-600 border-blue-100 hover:bg-blue-50" onClick={() => setDeliveryTracking({ open: true, orderId: o.id })}>Track Shipment</Button>
                                  </div>
                               </div>
+                              {o.status === 'delivered' && (
+                                 <div className="flex gap-2 flex-wrap mb-4">
+                                    <Button
+                                       variant="outline"
+                                       className="h-9 text-xs font-black border-slate-200"
+                                       onClick={() => {
+                                          const farmerId = o.farmerId || (allUsers || []).find((u: any) => u.profile?.fullName === o.farmerName)?.id || '';
+                                          if (!farmerId) return;
+                                          onOpenRating?.({ toUserId: farmerId, toUserName: o.farmerName || 'Farmer', entityType: 'order', entityId: o.id });
+                                       }}
+                                    >
+                                       Rate Farmer
+                                    </Button>
+                                    {req?.transporterId && (
+                                       <Button
+                                          variant="outline"
+                                          className="h-9 text-xs font-black border-slate-200"
+                                          onClick={() => {
+                                             const toUserId = String(req.transporterId || '');
+                                             const toUserName = (allUsers || []).find((u: any) => u.id === toUserId)?.profile?.fullName || 'Transporter';
+                                             onOpenRating?.({ toUserId, toUserName, entityType: 'transport_request', entityId: req.id });
+                                          }}
+                                       >
+                                          Rate Transporter
+                                       </Button>
+                                    )}
+                                 </div>
+                              )}
                               <div className="relative px-2 pb-2">
                                  <div className="absolute top-1.5 left-0 right-0 h-0.5 bg-slate-100 -z-10" />
                                  <div className="absolute top-1.5 left-0 h-0.5 bg-blue-600 -z-10 transition-all duration-1000" style={{ width: o.status === 'delivered' ? '100%' : ['in_transit', 'picked_up'].includes(o.status) ? '50%' : '5%' }} />
@@ -3508,45 +3723,6 @@ const BuyerDashboard = ({ user, listings, offers, orders, messages, rfqs, transp
                      )})}
                      {myOrders.length === 0 && <div className="text-center py-20 text-slate-400 bg-white rounded-3xl border border-dashed border-slate-200">No active orders. Finalize a deal to see them here.</div>}
                   </div>
-               </div>
-            )}
-
-            {view === 'messages' && (
-               <div className="space-y-6 animate-in slide-in-from-right-4">
-                  <h2 className="text-2xl font-bold text-slate-900">Messages</h2>
-                  <Card className="p-6">
-                     <div className="grid md:grid-cols-3 gap-6">
-                        <div className="md:col-span-1 space-y-2">
-                           <div className="text-xs font-black uppercase text-slate-400">Recent</div>
-                           <div className="space-y-2">
-                              {(messages || []).filter(m => m.fromUserId === user.id || m.toUserId === user.id).slice(0, 10).map(m => (
-                                 <div key={m.id} className="p-3 bg-slate-50 rounded-xl">
-                                    <div className="text-xs text-slate-400">{new Date(m.timestamp).toLocaleString()}</div>
-                                    <div className="text-sm font-medium text-slate-800">{m.text}</div>
-                                 </div>
-                              ))}
-                              {(messages || []).filter(m => m.fromUserId === user.id || m.toUserId === user.id).length === 0 && <div className="text-xs text-slate-400">No messages yet.</div>}
-                           </div>
-                        </div>
-                        <div className="md:col-span-2 space-y-3">
-                           <div className="text-xs font-black uppercase text-slate-400">New Message</div>
-                           <select className="w-full h-11 bg-slate-50 border border-slate-200 rounded-xl px-4 text-sm font-medium outline-blue-500" id="b-msg-recipient">
-                              {myOrders.map(o => <option key={o.id} value={o.farmerName}>{o.farmerName}</option>)}
-                           </select>
-                           <Input id="b-msg-text" placeholder="Type your message" />
-                           <Button className="w-full md:w-auto" onClick={() => {
-                              const select = document.getElementById('b-msg-recipient') as HTMLSelectElement;
-                              const textEl = document.getElementById('b-msg-text') as HTMLInputElement;
-                              const toName = select?.value;
-                              const text = textEl?.value || '';
-                              if (!text) return;
-                              const toUserId = (toName && allUsers.find(u => u.profile?.fullName === toName)?.id) || (allUsers.find(u => u.role === 'farmer')?.id || '');
-                              onSendMessage?.({ toUserId, text });
-                              if (textEl) textEl.value = '';
-                           }}>Send</Button>
-                        </div>
-                     </div>
-                  </Card>
                </div>
             )}
 
@@ -3570,30 +3746,6 @@ const BuyerDashboard = ({ user, listings, offers, orders, messages, rfqs, transp
                         <Button variant="ghost" onClick={() => setProfileData({ ...profileData, addresses: [] })}>Clear</Button>
                      </div>
                   </Card>
-               </div>
-            )}
-            {view === 'more' && (
-               <div className="space-y-6 animate-in slide-in-from-right-4">
-                  <h2 className="text-2xl font-bold text-slate-900">Pro Features</h2>
-                  <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
-                     {[
-                        { title: 'RFQ / Quotation', desc: 'Request quotes and compare' },
-                        { title: 'Shortlists', desc: 'Save listings and watch for changes' },
-                        { title: 'Quality Assurance', desc: 'Inspection and lab reports' },
-                        { title: 'Procurement Planning', desc: 'Budgets and cadence' },
-                        { title: 'Contracts', desc: 'Agreements and SLAs' },
-                        { title: 'Payments', desc: 'Escrow, milestones and invoices' },
-                        { title: 'Vendor Performance', desc: 'Supplier scorecards' },
-                        { title: 'Team Workflows', desc: 'Roles and approvals' },
-                        { title: 'Analytics', desc: 'Spend and forecasts' }
-                     ].map((f, i) => (
-                        <Card key={i} className="p-5">
-                           <h4 className="font-bold text-slate-900">{f.title}</h4>
-                           <p className="text-sm text-slate-600">{f.desc}</p>
-                           <div className="mt-3"><Button variant="outline" className="text-xs">Coming Soon</Button></div>
-                        </Card>
-                     ))}
-                  </div>
                </div>
             )}
 
@@ -4105,7 +4257,7 @@ const BuyerDashboard = ({ user, listings, offers, orders, messages, rfqs, transp
    );
 };
 
-const TransporterDashboard = ({ user, orders, messages, routePlans, transportRequests, transportBids, allUsers, onAddRoutePlan, onSendMessage, onLogout, onUpdateOrderStatus, onUpdateProfile, onRaiseDispute, onAddTransportBid, onUpdateTransportRequestStatus, onCounterTransportBid, onTransporterAcceptBuyerCounter, onOpenChat }: any) => {
+const TransporterDashboard = ({ user, orders, routePlans, transportRequests, transportBids, allUsers, onAddRoutePlan, onLogout, onUpdateOrderStatus, onUpdateProfile, onRaiseDispute, onAddTransportBid, onUpdateTransportRequestStatus, onCounterTransportBid, onTransporterAcceptBuyerCounter, onOpenLocationPicker, onOpenRating }: any) => {
    const [view, setView] = useState('home');
 
    // Vehicle & Profile State
@@ -4158,6 +4310,30 @@ const TransporterDashboard = ({ user, orders, messages, routePlans, transportReq
    const [otpValue, setOtpValue] = useState('');
    const [liveLocationError, setLiveLocationError] = useState<string | null>(null);
    const liveLocationTimerRef = React.useRef<any>(null);
+   const liveFreshWindowMs = 10 * 60 * 1000;
+   const jobLocationMeta = React.useMemo(() => {
+      const baseLat = (profileData as any)?.baseLat;
+      const baseLng = (profileData as any)?.baseLng;
+      const liveLat = (profileData as any)?.lastLiveLat;
+      const liveLng = (profileData as any)?.lastLiveLng;
+      const liveAt = (profileData as any)?.lastLiveAt;
+
+      const baseOk = baseLat != null && baseLng != null && Number.isFinite(Number(baseLat)) && Number.isFinite(Number(baseLng));
+      const liveOk = liveLat != null && liveLng != null && Number.isFinite(Number(liveLat)) && Number.isFinite(Number(liveLng));
+      const liveAtMs = liveAt ? Date.parse(String(liveAt)) : NaN;
+      const liveFresh = liveOk && Number.isFinite(liveAtMs) && (Date.now() - liveAtMs) <= liveFreshWindowMs;
+      const ageMin = Number.isFinite(liveAtMs) ? Math.floor((Date.now() - liveAtMs) / 60000) : null;
+
+      if (liveFresh) return { coords: { lat: Number(liveLat), lng: Number(liveLng) }, source: 'live' as const, ageMin };
+      if (baseOk) return { coords: { lat: Number(baseLat), lng: Number(baseLng) }, source: 'base' as const, ageMin };
+      if (liveOk) return { coords: { lat: Number(liveLat), lng: Number(liveLng) }, source: 'stale_live' as const, ageMin };
+      return { coords: null, source: null as const, ageMin };
+   }, [profileData]);
+   const jobLocation = jobLocationMeta.coords;
+   const [jobLocationError, setJobLocationError] = useState<string | null>(null);
+   const [searchRadiusLevel, setSearchRadiusLevel] = useState(0);
+   const searchRadiusExtraKmByLevel = [0, 5, 15, 35];
+   const maxSearchRadiusKm = 50;
 
    // Add Vehicle State
    const [showAddVehicle, setShowAddVehicle] = useState(false);
@@ -4232,18 +4408,176 @@ const TransporterDashboard = ({ user, orders, messages, routePlans, transportReq
       });
    };
 
-   const availableJobs = (transportRequests || []).filter((r: any) =>
-      r.mode === 'marketplace' &&
-      r.status === 'open' &&
-      !r.transporterId &&
-      matchesVehicle(r)
-   );
+   const haversineKm = (a: { lat: number; lng: number }, b: { lat: number; lng: number }) => {
+      const toRad = (d: number) => (d * Math.PI) / 180;
+      const R = 6371;
+      const dLat = toRad(b.lat - a.lat);
+      const dLng = toRad(b.lng - a.lng);
+      const lat1 = toRad(a.lat);
+      const lat2 = toRad(b.lat);
+      const s = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+      return 2 * R * Math.asin(Math.min(1, Math.sqrt(s)));
+   };
+
+   const getRequestPickupCoords = (r: any) => {
+      if (r?.pickupLat != null && r?.pickupLng != null) return { lat: Number(r.pickupLat), lng: Number(r.pickupLng) };
+      const farmerProfile: any = (allUsers || []).find((u: any) => u.id === r.farmerId)?.profile || {};
+      if (farmerProfile.pickupLat == null || farmerProfile.pickupLng == null) return null;
+      return { lat: Number(farmerProfile.pickupLat), lng: Number(farmerProfile.pickupLng) };
+   };
+
+   const baseRadiusKmForVehicle = (t: TransportRequest['vehicleType']) => {
+      if (t === 'Bike' || t === 'Auto') return 5;
+      if (t === 'Mini Truck') return 10;
+      if (t === 'Pickup') return 15;
+      return 25;
+   };
+   const searchExtraKm = searchRadiusExtraKmByLevel[Math.min(searchRadiusLevel, searchRadiusExtraKmByLevel.length - 1)] || 0;
+   const effectiveRadiusKmForRequest = (r: any) => Math.min(maxSearchRadiusKm, baseRadiusKmForVehicle(r.vehicleType) + searchExtraKm);
+
+   const availableJobs = React.useMemo(() => {
+      if (!jobLocation || !Number.isFinite(jobLocation.lat) || !Number.isFinite(jobLocation.lng)) return [];
+      const base = (transportRequests || [])
+         .filter((r: any) =>
+            r.mode === 'marketplace' &&
+            r.status === 'open' &&
+            !r.transporterId &&
+            matchesVehicle(r)
+         );
+      const withDist = base
+         .map((r: any) => {
+            const pickup = getRequestPickupCoords(r);
+            if (!pickup || !Number.isFinite(pickup.lat) || !Number.isFinite(pickup.lng)) return null;
+            const d = haversineKm(jobLocation, pickup);
+            return { r, d };
+         })
+         .filter(Boolean) as { r: any; d: number }[];
+      return withDist
+         .filter(x => Number.isFinite(x.d) && x.d <= effectiveRadiusKmForRequest(x.r))
+         .sort((a, b) => a.d - b.d)
+         .map(x => x.r);
+   }, [jobLocation, transportRequests, allUsers, profileData, searchRadiusLevel]);
+
+   const audioCtxRef = React.useRef<any>(null);
+   const lastJobIdsRef = React.useRef<Set<string>>(new Set());
+   const didInitJobsRef = React.useRef(false);
+
+   const playJobBeep = () => {
+      try {
+         const Ctx = (window as any).AudioContext || (window as any).webkitAudioContext;
+         if (!Ctx) return;
+         if (!audioCtxRef.current) audioCtxRef.current = new Ctx();
+         const ctx = audioCtxRef.current as AudioContext;
+         void ctx.resume?.();
+
+         const osc = ctx.createOscillator();
+         const gain = ctx.createGain();
+
+         osc.type = 'sine';
+         osc.frequency.value = 880;
+         gain.gain.value = 0.0001;
+
+         osc.connect(gain);
+         gain.connect(ctx.destination);
+
+         const now = ctx.currentTime;
+         gain.gain.setValueAtTime(0.0001, now);
+         gain.gain.exponentialRampToValueAtTime(0.12, now + 0.02);
+         gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.18);
+
+         osc.start(now);
+         osc.stop(now + 0.2);
+      } catch {
+      }
+   };
+
+   React.useEffect(() => {
+      if (!settingsData.notifyJobs) return;
+      if (view !== 'home') return;
+      if (typeof document !== 'undefined' && document.visibilityState && document.visibilityState !== 'visible') return;
+
+      const ids = new Set(availableJobs.map((r: any) => String(r.id)));
+      if (!didInitJobsRef.current) {
+         lastJobIdsRef.current = ids;
+         didInitJobsRef.current = true;
+         return;
+      }
+      let hasNew = false;
+      for (const id of ids) {
+         if (!lastJobIdsRef.current.has(id)) {
+            hasNew = true;
+            break;
+         }
+      }
+      lastJobIdsRef.current = ids;
+      if (hasNew) playJobBeep();
+   }, [availableJobs, settingsData.notifyJobs, view]);
+
+   const maxBaseRadiusKm = React.useMemo(() => {
+      const vehicles = getActiveVehicles();
+      let maxKm = 5;
+      for (const v of vehicles) {
+         const vt = normalizeVehicleType(v.type);
+         if (!vt) continue;
+         maxKm = Math.max(maxKm, baseRadiusKmForVehicle(vt));
+      }
+      return maxKm;
+   }, [profileData]);
+   const shownRadiusKm = Math.min(maxSearchRadiusKm, maxBaseRadiusKm + searchExtraKm);
+   const canExpandRadius = searchRadiusLevel < searchRadiusExtraKmByLevel.length - 1;
+   const nextShownRadiusKm = Math.min(maxSearchRadiusKm, maxBaseRadiusKm + (searchRadiusExtraKmByLevel[Math.min(searchRadiusLevel + 1, searchRadiusExtraKmByLevel.length - 1)] || 0));
+   const expandSearchRadius = () => setSearchRadiusLevel(l => Math.min(l + 1, searchRadiusExtraKmByLevel.length - 1));
+   const resetSearchRadius = () => setSearchRadiusLevel(0);
+
    const myDeliveries = (transportRequests || []).filter((r: any) => r.transporterId === user.id);
    const completedDeliveries = myDeliveries.filter((r: any) => r.status === 'delivered');
    const activeDeliveries = myDeliveries.filter((r: any) => r.status !== 'delivered' && r.status !== 'cancelled');
 
    const trackableDeliveries = activeDeliveries.filter((r: any) => r.status === 'picked_up' || r.status === 'in_transit');
    const trackableIdsKey = trackableDeliveries.map((r: any) => r.id).join('|');
+
+   const updateLiveLocation = async (opts?: { showErrors?: boolean }) => {
+      if (typeof navigator === 'undefined' || !navigator.geolocation) {
+         if (opts?.showErrors) setJobLocationError('Geolocation is not available in this browser.');
+         return;
+      }
+      if (opts?.showErrors) setJobLocationError(null);
+      navigator.geolocation.getCurrentPosition(
+         (p) => {
+            const lat = Number(p.coords.latitude);
+            const lng = Number(p.coords.longitude);
+            if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+               if (opts?.showErrors) setJobLocationError('Could not read a valid location from the device.');
+               return;
+            }
+               setSearchRadiusLevel(0);
+            const nextProfile: any = { ...(profileData as any), lastLiveLat: lat, lastLiveLng: lng, lastLiveAt: new Date().toISOString() };
+            setProfileData(nextProfile);
+            onUpdateProfile?.(user.id, nextProfile);
+         },
+         (e) => {
+            const code = e?.code;
+            if (!opts?.showErrors) return;
+            if (code === 1) setJobLocationError('Location permission denied. Allow location access to see nearby jobs.');
+            else if (code === 2) setJobLocationError('Location unavailable. Turn on GPS/Wi‑Fi and retry.');
+            else if (code === 3) setJobLocationError('Location request timed out. Retry.');
+            else setJobLocationError('Failed to fetch current location.');
+         },
+         { enableHighAccuracy: true, timeout: 9000, maximumAge: 0 }
+      );
+   };
+
+   const requestJobLocation = async () => updateLiveLocation({ showErrors: true });
+
+   React.useEffect(() => {
+      if (!settingsData.locationSharing) return;
+      if (view !== 'home') return;
+      const intervalMs = 8 * 60 * 1000;
+      const tick = () => void updateLiveLocation({ showErrors: false });
+      if (jobLocationMeta.source !== 'live') tick();
+      const id = setInterval(tick, intervalMs);
+      return () => clearInterval(id);
+   }, [settingsData.locationSharing, view, jobLocationMeta.source]);
 
    React.useEffect(() => {
       if (liveLocationTimerRef.current) {
@@ -4374,9 +4708,8 @@ const TransporterDashboard = ({ user, orders, messages, routePlans, transportReq
                   { id: 'home', label: 'Load Board', icon: Box, badge: availableJobs.length },
                   { id: 'deliveries', label: 'My Deliveries', icon: Route, badge: activeDeliveries.length },
                   { id: 'earnings', label: 'Earnings', icon: IndianRupee },
+                  { id: 'analytics', label: 'Analytics', icon: BarChart3 },
                   { id: 'vehicle', label: 'Vehicle', icon: Truck },
-                     { id: 'more', label: 'Pro Features', icon: Settings },
-                     { id: 'messages', label: 'Messages', icon: MessageCircle },
                   { id: 'profile', label: 'My Profile', icon: UserIcon },
                   { id: 'notifications', label: 'Notifications', icon: Bell, badge: notifications.filter(n => !n.isRead).length },
                   { id: 'help', label: 'Help & Support', icon: HelpCircle },
@@ -4417,6 +4750,53 @@ const TransporterDashboard = ({ user, orders, messages, routePlans, transportReq
                         ))}
                      </div>
                   </div>
+
+                  {!jobLocation && (
+                     <Card className="p-5 border-orange-100">
+                        <div className="flex flex-col md:flex-row md:items-center gap-4 justify-between">
+                           <div>
+                              <div className="text-xs text-orange-600 font-black uppercase tracking-widest">Nearby Jobs</div>
+                              <div className="font-black text-slate-900">Set a base location or enable GPS to see nearby requests</div>
+                              <div className="text-sm text-slate-500 font-bold">Base location is used when GPS is off. Live location refreshes every ~8 minutes when enabled.</div>
+                              {jobLocationError && <div className="mt-2 text-sm font-bold text-red-600">{jobLocationError}</div>}
+                           </div>
+                           <div className="flex gap-2">
+                              <Button className="bg-orange-600 hover:bg-orange-700 font-black" onClick={requestJobLocation}>Use Current Location</Button>
+                           </div>
+                        </div>
+                     </Card>
+                  )}
+
+                  {jobLocation && (
+                     <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                        <div className="text-sm font-bold text-slate-600">
+                           Showing marketplace loads within <span className="text-slate-900 font-black">{shownRadiusKm} km</span> • {jobLocationMeta.source === 'live' ? `Live location${jobLocationMeta.ageMin != null ? ` (updated ${jobLocationMeta.ageMin} min ago)` : ''}` : jobLocationMeta.source === 'base' ? 'Base location' : 'Last known location'}
+                        </div>
+                        <div className="flex gap-2">
+                           {searchRadiusLevel > 0 && (
+                              <Button variant="outline" className="border-slate-200 font-bold" onClick={resetSearchRadius}>Reset Radius</Button>
+                           )}
+                           <Button variant="outline" className="border-slate-200 font-bold" onClick={requestJobLocation}>Refresh Location</Button>
+                        </div>
+                     </div>
+                  )}
+
+                  {jobLocation && availableJobs.length === 0 && (
+                     <Card className="p-5 border-orange-100">
+                        <div className="flex flex-col md:flex-row md:items-center gap-4 justify-between">
+                           <div>
+                              <div className="text-xs text-orange-600 font-black uppercase tracking-widest">No Nearby Loads</div>
+                              <div className="font-black text-slate-900">No marketplace loads found within {shownRadiusKm} km</div>
+                              <div className="text-sm text-slate-500 font-bold">Try expanding the radius or refresh your location.</div>
+                           </div>
+                           <div className="flex gap-2">
+                              {canExpandRadius && (
+                                 <Button className="bg-orange-600 hover:bg-orange-700 font-black" onClick={expandSearchRadius}>Expand to {nextShownRadiusKm} km</Button>
+                              )}
+                           </div>
+                        </div>
+                     </Card>
+                  )}
 
                   <div className="grid gap-6">
                      {availableJobs.map((r: any) => {
@@ -4593,19 +4973,6 @@ const TransporterDashboard = ({ user, orders, messages, routePlans, transportReq
                               <Button variant="outline" className="h-10 text-xs font-bold border-dashed border-slate-300 hover:border-orange-500 hover:text-orange-600 transition-colors" onClick={() => {
                                  alert('POD upload will be added soon.')
                               }}>POD</Button>
-                              <Button className="h-10 text-xs font-bold bg-orange-600 hover:bg-orange-700" onClick={() => {
-                                 const toUserId = order?.buyerId || r.buyerId || ''
-                                 const toUserName =
-                                    order?.buyerName ||
-                                    allUsers?.find((u: any) => u.id === toUserId)?.profile?.fullName ||
-                                    allUsers?.find((u: any) => u.id === toUserId)?.phone ||
-                                    'Buyer'
-                                 if (!toUserId) {
-                                    alert('Buyer not found for this order.')
-                                    return
-                                 }
-                                 onOpenChat?.(toUserId, toUserName, undefined, order?.id || r.orderId)
-                              }}>Message</Button>
                               <Button variant="outline" className="h-10 text-xs font-bold" onClick={() => {
                                  setIssueOrderId(order?.id || r.orderId);
                                  setIssueText('');
@@ -4661,6 +5028,7 @@ const TransporterDashboard = ({ user, orders, messages, routePlans, transportReq
                                  <th className="px-6 py-4">Time Taken</th>
                                  <th className="px-6 py-4">Distance</th>
                                  <th className="px-6 py-4 text-right">Amount</th>
+                                 <th className="px-6 py-4 text-right">Rating</th>
                               </tr>
                            </thead>
                            <tbody className="divide-y divide-slate-100">
@@ -4677,6 +5045,34 @@ const TransporterDashboard = ({ user, orders, messages, routePlans, transportReq
                                        <td className="px-6 py-4 text-slate-500">{formatMinutes(timeMins)}</td>
                                        <td className="px-6 py-4 text-slate-500">{distance} KM</td>
                                        <td className="px-6 py-4 text-right font-black text-slate-900">₹{amount.toLocaleString()}</td>
+                                       <td className="px-6 py-4 text-right">
+                                          <div className="flex justify-end gap-2 flex-wrap">
+                                             <Button
+                                                variant="outline"
+                                                className="h-8 text-[10px] font-black border-slate-200"
+                                                onClick={() => {
+                                                   const toUserId = String(r.farmerId || '');
+                                                   if (!toUserId) return;
+                                                   const toUserName = (allUsers || []).find((u: any) => u.id === toUserId)?.profile?.fullName || 'Farmer';
+                                                   onOpenRating?.({ toUserId, toUserName, entityType: 'transport_request', entityId: r.id });
+                                                }}
+                                             >
+                                                Rate Farmer
+                                             </Button>
+                                             <Button
+                                                variant="outline"
+                                                className="h-8 text-[10px] font-black border-slate-200"
+                                                onClick={() => {
+                                                   const toUserId = String(r.buyerId || '');
+                                                   if (!toUserId) return;
+                                                   const toUserName = (allUsers || []).find((u: any) => u.id === toUserId)?.profile?.fullName || 'Buyer';
+                                                   onOpenRating?.({ toUserId, toUserName, entityType: 'transport_request', entityId: r.id });
+                                                }}
+                                             >
+                                                Rate Buyer
+                                             </Button>
+                                          </div>
+                                       </td>
                                     </tr>
                                  )
                               })}
@@ -4685,6 +5081,111 @@ const TransporterDashboard = ({ user, orders, messages, routePlans, transportReq
                         {completedDeliveries.length === 0 && <div className="py-12 text-center text-slate-400 text-xs">No payment records found yet.</div>}
                      </div>
                   </Card>
+               </div>
+            )}
+
+            {view === 'analytics' && (
+               <div className="space-y-8 animate-in slide-in-from-right-4">
+                  {(() => {
+                     const completed = completedDeliveries || [];
+                     const active = activeDeliveries || [];
+                     const total = Number(totalEarnings || 0);
+                     const avgPerDelivery = completed.length > 0 ? Math.round(total / completed.length) : 0;
+                     const timeMinutesArr = completed
+                        .map((r: any) => r.totalTimeMinutes ?? computeTimeMinutes(r.pickupConfirmedAt, r.deliveryConfirmedAt))
+                        .map((n: any) => Number(n))
+                        .filter((n: any) => Number.isFinite(n) && n > 0) as number[];
+                     const avgTimeMinutes = timeMinutesArr.length > 0 ? Math.round(timeMinutesArr.reduce((a, b) => a + b, 0) / timeMinutesArr.length) : null;
+                     const distanceKmArr = completed
+                        .map((r: any) => orders.find((o: any) => o.id === r.orderId))
+                        .map((o: any) => Number(o?.distanceKm))
+                        .filter((n: any) => Number.isFinite(n) && n > 0) as number[];
+                     const avgDistanceKm = distanceKmArr.length > 0 ? Math.round(distanceKmArr.reduce((a, b) => a + b, 0) / distanceKmArr.length) : null;
+
+                     const byDay = completed.reduce((acc: any, r: any) => {
+                        const t = Date.parse(String(r.deliveryConfirmedAt || r.createdAt || ''));
+                        if (!Number.isFinite(t)) return acc;
+                        const d = new Date(t);
+                        const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+                        acc[key] = (acc[key] || 0) + Number(r.finalFare ?? r.estimatedFare ?? 0);
+                        return acc;
+                     }, {});
+                     const series = Object.entries(byDay)
+                        .sort((a: any, b: any) => String(a[0]).localeCompare(String(b[0])))
+                        .slice(-7) as [string, number][];
+                     const maxDay = series.reduce((m, x) => Math.max(m, Number(x[1]) || 0), 0) || 1;
+
+                     return (
+                        <>
+                           <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
+                              <div>
+                                 <h2 className="text-3xl font-black text-slate-900">Analytics</h2>
+                                 <p className="text-slate-500 font-bold">Performance and earnings insights</p>
+                              </div>
+                              <div className="flex gap-2">
+                                 <Button variant="outline" className="border-slate-200 font-bold" onClick={() => setView('earnings')}>View Earnings</Button>
+                              </div>
+                           </div>
+
+                           <div className="grid md:grid-cols-4 gap-4">
+                              <Card className="p-5">
+                                 <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Active Deliveries</div>
+                                 <div className="text-3xl font-black text-slate-900">{active.length}</div>
+                              </Card>
+                              <Card className="p-5">
+                                 <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Completed Deliveries</div>
+                                 <div className="text-3xl font-black text-slate-900">{completed.length}</div>
+                              </Card>
+                              <Card className="p-5">
+                                 <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Total Earnings</div>
+                                 <div className="text-3xl font-black text-slate-900">₹{total.toLocaleString()}</div>
+                              </Card>
+                              <Card className="p-5">
+                                 <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Avg / Delivery</div>
+                                 <div className="text-3xl font-black text-slate-900">₹{avgPerDelivery.toLocaleString()}</div>
+                              </Card>
+                           </div>
+
+                           <div className="grid md:grid-cols-2 gap-6">
+                              <Card className="p-6">
+                                 <div className="flex items-center justify-between mb-5">
+                                    <div className="font-black text-slate-900">Last 7 days earnings</div>
+                                    <div className="text-xs font-bold text-slate-400 uppercase tracking-widest">Delivered</div>
+                                 </div>
+                                 {series.length === 0 ? (
+                                    <div className="py-10 text-center text-slate-400 font-bold text-sm">No completed deliveries yet.</div>
+                                 ) : (
+                                    <div className="space-y-3">
+                                       {series.map(([day, amt]) => (
+                                          <div key={day} className="flex items-center gap-3">
+                                             <div className="w-24 text-[10px] font-black text-slate-500">{day.slice(5)}</div>
+                                             <div className="flex-1 h-3 bg-slate-100 rounded-full overflow-hidden">
+                                                <div className="h-full bg-orange-600" style={{ width: `${Math.max(4, Math.round((Number(amt || 0) / maxDay) * 100))}%` }} />
+                                             </div>
+                                             <div className="w-24 text-right text-xs font-black text-slate-900">₹{Number(amt || 0).toLocaleString()}</div>
+                                          </div>
+                                       ))}
+                                    </div>
+                                 )}
+                              </Card>
+
+                              <Card className="p-6">
+                                 <div className="font-black text-slate-900 mb-5">Averages</div>
+                                 <div className="grid grid-cols-2 gap-4">
+                                    <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200">
+                                       <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Avg Time</div>
+                                       <div className="text-xl font-black text-slate-900">{avgTimeMinutes != null ? formatMinutes(avgTimeMinutes) : '—'}</div>
+                                    </div>
+                                    <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200">
+                                       <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Avg Distance</div>
+                                       <div className="text-xl font-black text-slate-900">{avgDistanceKm != null ? `${avgDistanceKm} KM` : '—'}</div>
+                                    </div>
+                                 </div>
+                              </Card>
+                           </div>
+                        </>
+                     );
+                  })()}
                </div>
             )}
 
@@ -4818,13 +5319,13 @@ const TransporterDashboard = ({ user, orders, messages, routePlans, transportReq
                                              pv.id === v.id ? ({ ...pv, status: (pv.status === 'active' ? 'inactive' : 'active') as Vehicle['status'] } as Vehicle) : pv
                                           );
                                           setProfileData(prev => ({ ...prev, vehicles: updated }));
-                                          onUpdateProfile?.({ ...user.profile, vehicles: updated });
+                                          onUpdateProfile?.(user.id, { ...profileData, vehicles: updated });
                                       }}>{v.status === 'active' ? 'Deactivate' : 'Activate'}</Button>
                                       <Button variant="ghost" size="sm" className="text-red-500 hover:text-red-700 hover:bg-red-50 font-bold" onClick={() => {
                                           if(!confirm('Delete this vehicle?')) return;
                                           const updated = (profileData.vehicles || []).filter((pv: Vehicle) => pv.id !== v.id);
                                           setProfileData(prev => ({ ...prev, vehicles: updated }));
-                                          onUpdateProfile?.({ ...user.profile, vehicles: updated });
+                                          onUpdateProfile?.(user.id, { ...profileData, vehicles: updated });
                                       }}>Delete</Button>
                                    </div>
                                 </div>
@@ -4851,7 +5352,7 @@ const TransporterDashboard = ({ user, orders, messages, routePlans, transportReq
                         <h2 className="text-xl font-bold text-slate-900">{user.profile.fullName || 'User'}</h2>
                         <p className="text-sm text-slate-500 mb-6">{user.profile.city || 'Mumbai'}, {user.profile.state || 'Maharashtra'}</p>
                         <div className="grid grid-cols-2 gap-4 mb-6 text-left">
-                           <div className="p-3 bg-slate-50 rounded-xl"><div className="text-xs text-slate-400 font-bold uppercase">Rating</div><div className="font-bold text-slate-700 flex items-center gap-1">4.8 <Star className="w-3 h-3 text-orange-400 fill-current" /></div></div>
+                           <div className="p-3 bg-slate-50 rounded-xl"><div className="text-xs text-slate-400 font-bold uppercase">Rating</div><div className="font-bold text-slate-700 flex items-center gap-1">{(profileData.rating != null ? Number(profileData.rating) : user.profile.rating != null ? Number(user.profile.rating) : null) != null ? (profileData.rating != null ? Number(profileData.rating) : Number(user.profile.rating)).toFixed(1) : '—'} <Star className="w-3 h-3 text-orange-400 fill-current" /></div><div className="text-[10px] text-slate-400 font-bold">{(profileData.ratingCount ?? user.profile.ratingCount) ? `${profileData.ratingCount ?? user.profile.ratingCount} ratings` : ''}</div></div>
                            <div className="p-3 bg-slate-50 rounded-xl"><div className="text-xs text-slate-400 font-bold uppercase">Trips</div><div className="font-bold text-slate-700">{completedDeliveries.length}</div></div>
                         </div>
                         <div className="flex flex-col gap-2">
@@ -4918,6 +5419,46 @@ const TransporterDashboard = ({ user, orders, messages, routePlans, transportReq
                                     <div className="space-y-4 animate-in fade-in">
                                        <div className="grid md:grid-cols-2 gap-4"><Input label="Full Name" value={profileData.fullName || ''} onChange={e => setProfileData({ ...profileData, fullName: e.target.value })} /><Input label="Language" value={profileData.language || ''} onChange={e => setProfileData({ ...profileData, language: e.target.value })} /></div>
                                        <div className="grid md:grid-cols-2 gap-4"><Input label="City" value={profileData.city || ''} onChange={e => setProfileData({ ...profileData, city: e.target.value })} /><Input label="State" value={profileData.state || ''} onChange={e => setProfileData({ ...profileData, state: e.target.value })} /></div>
+                                       <div className="p-4 bg-slate-50 rounded-xl border border-slate-200">
+                                          <div className="text-xs font-black uppercase text-slate-400 mb-2">Base Location (for matching loads)</div>
+                                          <div className="text-sm font-bold text-slate-800">
+                                             {profileData.baseAddress ? profileData.baseAddress : (profileData.baseLat != null && profileData.baseLng != null ? `${Number(profileData.baseLat).toFixed(6)}, ${Number(profileData.baseLng).toFixed(6)}` : 'Not set')}
+                                          </div>
+                                          <div className="mt-3 flex gap-2 flex-wrap">
+                                             <Button
+                                                variant="outline"
+                                                className="border-slate-200 font-bold"
+                                                onClick={() => onOpenLocationPicker?.({
+                                                   title: 'Set Base Location',
+                                                   initial: profileData.baseLat != null && profileData.baseLng != null ? { lat: Number(profileData.baseLat), lng: Number(profileData.baseLng), address: profileData.baseAddress } : undefined,
+                                                   onPick: (loc: PickedLocation) => {
+                                                      const next: any = { ...profileData, baseLat: loc.lat, baseLng: loc.lng, baseAddress: loc.address };
+                                                      setProfileData(next);
+                                                      onUpdateProfile?.(user.id, next);
+                                                   }
+                                                })}
+                                             >
+                                                Pick on Map
+                                             </Button>
+                                             <Button
+                                                variant="outline"
+                                                className="border-slate-200 font-bold"
+                                                onClick={async () => {
+                                                   if (typeof navigator === 'undefined' || !navigator.geolocation) return;
+                                                   navigator.geolocation.getCurrentPosition((p) => {
+                                                      const lat = Number(p.coords.latitude);
+                                                      const lng = Number(p.coords.longitude);
+                                                      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+                                                      const next: any = { ...profileData, baseLat: lat, baseLng: lng };
+                                                      setProfileData(next);
+                                                      onUpdateProfile?.(user.id, next);
+                                                   });
+                                                }}
+                                             >
+                                                Use Current Location
+                                             </Button>
+                                          </div>
+                                       </div>
                                     </div>
                                  )}
 
@@ -5040,50 +5581,6 @@ const TransporterDashboard = ({ user, orders, messages, routePlans, transportReq
                </div>
             )}
 
-            {view === 'messages' && (
-               <div className="space-y-6 animate-in slide-in-from-right-4">
-                  <h2 className="text-2xl font-bold text-slate-900">Messages</h2>
-                  <Card className="p-6">
-                     <div className="grid md:grid-cols-3 gap-6">
-                        <div className="md:col-span-1 space-y-3">
-                           <div className="text-xs font-black uppercase text-slate-400">Conversations</div>
-                           <div className="space-y-2">
-                              {(messages || []).filter(m => m.fromUserId === user.id || m.toUserId === user.id).slice(0, 10).map(m => (
-                                 <div key={m.id} className="p-3 bg-slate-50 rounded-xl">
-                                    <div className="text-xs text-slate-400">{new Date(m.timestamp).toLocaleString()}</div>
-                                    <div className="text-sm font-medium text-slate-800">{m.text}</div>
-                                 </div>
-                              ))}
-                              {(messages || []).filter(m => m.fromUserId === user.id || m.toUserId === user.id).length === 0 && <div className="text-xs text-slate-400">No messages yet.</div>}
-                           </div>
-                        </div>
-                        <div className="md:col-span-2 space-y-3">
-                           <div className="text-xs font-black uppercase text-slate-400">New Message</div>
-                           <select
-                              className="w-full h-11 bg-slate-50 border border-slate-200 rounded-xl px-4 text-sm font-medium outline-nature-500"
-                              id="msg-recipient"
-                           >
-                              {orders.map(o => <option key={o.id} value={o.buyerName}>{o.buyerName}</option>)}
-                           </select>
-                           <Input id="msg-text" placeholder="Type your message" />
-                           <Button className="w-full md:w-auto" onClick={() => {
-                              const select = document.getElementById('msg-recipient') as HTMLSelectElement;
-                              const textEl = document.getElementById('msg-text') as HTMLInputElement;
-                              const toName = select?.value;
-                              const text = textEl?.value || '';
-                              if (!text) return;
-                              const counterpart = toName ? toName : 'Recipient';
-                              const receiver = counterpart;
-                              const toUserId = (receiver && allUsers.find(u => u.profile?.fullName === receiver)?.id) || (allUsers.find(u => u.role === 'buyer')?.id || '');
-                              onSendMessage?.({ toUserId, text });
-                              if (textEl) textEl.value = '';
-                           }}>Send</Button>
-                        </div>
-                     </div>
-                  </Card>
-               </div>
-            )}
-
             {view === 'addresses' && (
                <div className="space-y-6 animate-in slide-in-from-right-4">
                   <h2 className="text-2xl font-bold text-slate-900">Addresses</h2>
@@ -5120,45 +5617,6 @@ const TransporterDashboard = ({ user, orders, messages, routePlans, transportReq
                </div>
             )}
 
-            {view === 'messages' && (
-               <div className="space-y-6 animate-in slide-in-from-right-4">
-                  <div><h2 className="text-2xl font-black text-slate-900">Messages</h2><p className="text-slate-500">Chat with farmers and buyers.</p></div>
-                  <Card className="p-6">
-                     <div className="grid md:grid-cols-3 gap-6">
-                        <div className="md:col-span-1 space-y-2">
-                           <div className="text-xs font-black uppercase text-slate-400">Recent</div>
-                           <div className="space-y-2">
-                              {(messages || []).filter(m => m.fromUserId === user.id || m.toUserId === user.id).slice(0, 10).map(m => (
-                                 <div key={m.id} className="p-3 bg-slate-50 rounded-xl">
-                                    <div className="text-xs text-slate-400">{new Date(m.timestamp).toLocaleString()}</div>
-                                    <div className="text-sm font-medium text-slate-800">{m.text}</div>
-                                 </div>
-                              ))}
-                              {(messages || []).filter(m => m.fromUserId === user.id || m.toUserId === user.id).length === 0 && <div className="text-xs text-slate-400">No messages yet.</div>}
-                           </div>
-                        </div>
-                        <div className="md:col-span-2 space-y-3">
-                           <div className="text-xs font-black uppercase text-slate-400">New Message</div>
-                           <select className="w-full h-11 bg-slate-50 border border-slate-200 rounded-xl px-4 text-sm font-medium outline-nature-500" id="t-msg-recipient">
-                              {activeDeliveries.map(o => <option key={o.id} value={o.farmerName}>{o.farmerName}</option>)}
-                           </select>
-                           <Input id="t-msg-text" placeholder="Type your message" />
-                           <Button className="w-full md:w-auto" onClick={() => {
-                              const select = document.getElementById('t-msg-recipient') as HTMLSelectElement;
-                              const textEl = document.getElementById('t-msg-text') as HTMLInputElement;
-                              const toName = select?.value;
-                              const text = textEl?.value || '';
-                              if (!text) return;
-                              const toUserId = (toName && allUsers.find(u => u.profile?.fullName === toName)?.id) || (allUsers.find(u => u.role === 'farmer')?.id || '');
-                              onSendMessage?.({ toUserId, text });
-                              if (textEl) textEl.value = '';
-                           }}>Send</Button>
-                        </div>
-                     </div>
-                  </Card>
-               </div>
-            )}
-
             {/* ===== SETTINGS VIEW ===== */}
             {view === 'settings' && (
                <div className="space-y-6 animate-in slide-in-from-right-4">
@@ -5174,27 +5632,6 @@ const TransporterDashboard = ({ user, orders, messages, routePlans, transportReq
                         ))}
                      </div>
                   </Card>
-               </div>
-            )}
-            {view === 'more' && (
-               <div className="space-y-6 animate-in slide-in-from-right-4">
-                  <div><h2 className="text-2xl font-black text-slate-900">Pro Features</h2><p className="text-slate-500">Explore advanced transport tools.</p></div>
-                  <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
-                     {[
-                        { title: 'Route Optimization', desc: 'Multi-stop planning and ETAs' },
-                        { title: 'Fleet Management', desc: 'Maintenance and permits' },
-                        { title: 'Compliance', desc: 'Docs and audits' },
-                        { title: 'Earnings Analytics', desc: 'Utilization and trends' },
-                        { title: 'Preferred Partners', desc: 'Favorites and SLAs' },
-                        { title: 'POD Workflows', desc: 'Digital signatures and proofs' }
-                     ].map((f, i) => (
-                        <Card key={i} className="p-5">
-                           <h4 className="font-bold text-slate-900">{f.title}</h4>
-                           <p className="text-sm text-slate-600">{f.desc}</p>
-                           <div className="mt-3"><Button variant="outline" className="text-xs">Coming Soon</Button></div>
-                        </Card>
-                     ))}
-                  </div>
                </div>
             )}
          </main>
@@ -5350,13 +5787,62 @@ const AdminDashboard = ({ allUsers, listings, orders, disputes, systemConfig, on
    const [tab, setTab] = useState('disputes'); // Set default to disputes for this task
    const [selectedDispute, setSelectedDispute] = useState<any>(null);
    const pendingTransporters = allUsers.filter((u: any) => u.role === 'transporter' && u.profile.approvalStatus === 'pending');
+   const [priceImportStatus, setPriceImportStatus] = useState<{ type: 'idle' | 'loading' | 'done' | 'error'; message?: string }>({ type: 'idle' });
+   const [priceImportPreview, setPriceImportPreview] = useState<any[]>([]);
+
+   const parseCsv = (text: string) => {
+      const rows: string[][] = [];
+      let cur = '';
+      let row: string[] = [];
+      let inQuotes = false;
+      for (let i = 0; i < text.length; i++) {
+         const ch = text[i];
+         const next = text[i + 1];
+         if (ch === '"' && inQuotes && next === '"') {
+            cur += '"';
+            i++;
+            continue;
+         }
+         if (ch === '"') {
+            inQuotes = !inQuotes;
+            continue;
+         }
+         if (ch === ',' && !inQuotes) {
+            row.push(cur);
+            cur = '';
+            continue;
+         }
+         if ((ch === '\n' || ch === '\r') && !inQuotes) {
+            if (ch === '\r' && next === '\n') i++;
+            row.push(cur);
+            cur = '';
+            if (row.some(c => String(c || '').trim().length > 0)) rows.push(row.map(c => String(c ?? '')));
+            row = [];
+            continue;
+         }
+         cur += ch;
+      }
+      row.push(cur);
+      if (row.some(c => String(c || '').trim().length > 0)) rows.push(row.map(c => String(c ?? '')));
+      return rows;
+   };
+
+   const normKey = (s: string) => String(s || '').trim().toLowerCase().replace(/\s+/g, '').replace(/[_-]/g, '');
+   const pick = (obj: any, keys: string[]) => {
+      for (const k of keys) {
+         const nk = normKey(k);
+         const found = Object.keys(obj).find(x => normKey(x) === nk);
+         if (found) return obj[found];
+      }
+      return undefined;
+   };
 
    return (
       <div className="flex h-screen bg-slate-100 overflow-hidden">
          <div className="w-64 bg-slate-900 text-slate-300 flex flex-col p-4">
             <div className="text-white font-bold text-xl mb-8 flex items-center gap-2 px-2"><ShieldCheck className="w-6 h-6 text-nature-500" /> Admin</div>
             <nav className="space-y-1">
-               {['Overview', 'Approvals', 'Users', 'Disputes', 'Settings'].map(t => (
+               {['Overview', 'Approvals', 'Users', 'Disputes', 'Prices', 'Settings'].map(t => (
                   <button key={t} onClick={() => setTab(t.toLowerCase())} className={`w-full text-left px-4 py-3 rounded-xl transition-all ${tab === t.toLowerCase() ? 'bg-nature-600 text-white' : 'hover:bg-slate-800'}`}>{t}</button>
                ))}
             </nav>
@@ -5480,8 +5966,108 @@ const AdminDashboard = ({ allUsers, listings, orders, disputes, systemConfig, on
                </div>
             )}
 
+            {tab === 'prices' && (
+               <div className="space-y-6 animate-in slide-in-from-right-4">
+                  <Card className="p-6 space-y-4">
+                     <div>
+                        <div className="text-lg font-black text-slate-900">Upload Mandi Price File</div>
+                        <div className="text-sm text-slate-500 font-medium">Upload CSV/JSON downloaded from government market price sources (AGMARKNET/OGD exports).</div>
+                     </div>
+                     <input
+                        type="file"
+                        accept=".csv,.json,application/json,text/csv"
+                        className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3"
+                        onChange={async (e) => {
+                           const file = e.target.files?.[0];
+                           if (!file) return;
+                           setPriceImportStatus({ type: 'loading', message: 'Reading file...' });
+                           try {
+                              const text = await file.text();
+                              let records: any[] = [];
+                              if (file.name.toLowerCase().endsWith('.json')) {
+                                 const parsed = JSON.parse(text);
+                                 records = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.records) ? parsed.records : [];
+                              } else {
+                                 const grid = parseCsv(text);
+                                 const header = (grid[0] || []).map(h => String(h || '').trim());
+                                 const body = grid.slice(1);
+                                 records = body.map(r => {
+                                    const obj: any = {};
+                                    header.forEach((h, i) => { obj[h] = r[i]; });
+                                    return obj;
+                                 });
+                              }
+
+                              const mapped = records.map((r: any) => {
+                                 const commodity = String(pick(r, ['commodity', 'Commodity']) || '').trim();
+                                 const variety = String(pick(r, ['variety', 'Variety']) || '').trim() || null;
+                                 const grade = String(pick(r, ['grade']) || '').trim() || null;
+                                 const state = String(pick(r, ['state', 'State']) || '').trim() || null;
+                                 const district = String(pick(r, ['district', 'District']) || '').trim() || null;
+                                 const market = String(pick(r, ['market', 'Market']) || '').trim() || null;
+                                 const arrivalDateRaw = pick(r, ['arrivalDate', 'arrival_date', 'date', 'ArrivalDate', 'Arrival_Date']);
+                                 const arrivalDate = arrivalDateRaw ? String(arrivalDateRaw).slice(0, 10) : null;
+                                 const minPrice = Number(pick(r, ['minPrice', 'min_price', 'min']) || 0) || null;
+                                 const maxPrice = Number(pick(r, ['maxPrice', 'max_price', 'max']) || 0) || null;
+                                 const modalPrice = Number(pick(r, ['modalPrice', 'modal_price', 'modal']) || 0) || null;
+                                 const unit = String(pick(r, ['unit']) || '₹/Quintal');
+                                 const source = String(pick(r, ['source']) || 'gov_upload');
+                                 return { commodity, variety, grade, state, district, market, arrivalDate, minPrice, maxPrice, modalPrice, unit, source };
+                              }).filter((x: any) => x.commodity);
+
+                              setPriceImportPreview(mapped.slice(0, 10));
+                              setPriceImportStatus({ type: 'loading', message: `Uploading ${mapped.length} records...` });
+                              await svc.upsertMarketPrices(mapped);
+                              setPriceImportStatus({ type: 'done', message: `Uploaded ${mapped.length} records successfully.` });
+                           } catch (err: any) {
+                              setPriceImportStatus({ type: 'error', message: String(err?.message || err || 'Upload failed.') });
+                           }
+                        }}
+                     />
+                     {priceImportStatus.type !== 'idle' && (
+                        <div className={`p-3 rounded-xl text-sm font-bold ${priceImportStatus.type === 'error' ? 'bg-red-50 border border-red-200 text-red-700' : priceImportStatus.type === 'done' ? 'bg-green-50 border border-green-200 text-green-700' : 'bg-slate-50 border border-slate-200 text-slate-700'}`}>
+                           {priceImportStatus.message}
+                        </div>
+                     )}
+                  </Card>
+
+                  <Card className="p-6">
+                     <div className="flex items-center justify-between mb-4">
+                        <div className="font-black text-slate-900">Preview</div>
+                        <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Showing {priceImportPreview.length}</div>
+                     </div>
+                     {priceImportPreview.length === 0 ? (
+                        <div className="text-sm text-slate-400 font-bold">Upload a file to see preview.</div>
+                     ) : (
+                        <div className="overflow-x-auto">
+                           <table className="w-full text-left text-sm">
+                              <thead className="text-[10px] font-black uppercase tracking-widest text-slate-400 border-b border-slate-100">
+                                 <tr>
+                                    <th className="py-2 pr-4">Commodity</th>
+                                    <th className="py-2 pr-4">Market</th>
+                                    <th className="py-2 pr-4">Date</th>
+                                    <th className="py-2 pr-4 text-right">Modal</th>
+                                 </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-50">
+                                 {priceImportPreview.map((p: any, idx: number) => (
+                                    <tr key={idx}>
+                                       <td className="py-3 pr-4 font-black text-slate-900">{p.commodity}</td>
+                                       <td className="py-3 pr-4 text-slate-600 font-bold">{[p.market, p.district, p.state].filter(Boolean).join(', ')}</td>
+                                       <td className="py-3 pr-4 text-slate-600 font-bold">{p.arrivalDate || '—'}</td>
+                                       <td className="py-3 pr-4 text-right font-black text-nature-700">₹{Number(p.modalPrice || 0).toLocaleString()}</td>
+                                    </tr>
+                                 ))}
+                              </tbody>
+                           </table>
+                        </div>
+                     )}
+                  </Card>
+               </div>
+            )}
+
             {/* Placeholder for other tabs */}
-            {tab !== 'disputes' && (
+            {tab !== 'disputes' && tab !== 'prices' && (
                <div className="text-center py-20 text-slate-400">
                   <p>Content for {tab} tab placeholder.</p>
                </div>
@@ -5514,17 +6100,22 @@ const App = () => {
    const [routePlans, setRoutePlans] = useState<RoutePlan[]>([]);
    const [transportRequests, setTransportRequests] = useState<TransportRequest[]>([]);
    const [transportBids, setTransportBids] = useState<TransportBid[]>([]);
-   const [chatDrawer, setChatDrawer] = useState<{ open: boolean, targetUserId: string, targetUserName: string, listingId?: string, orderId?: string, offerId?: string }>({ open: false, targetUserId: '', targetUserName: '' });
    const [invoiceModal, setInvoiceModal] = useState<{ open: boolean, order: Order | null }>({ open: false, order: null });
+   const [ratingModal, setRatingModal] = useState<{ open: boolean; toUserId: string; toUserName: string; entityType: 'order' | 'transport_request'; entityId: string }>({ open: false, toUserId: '', toUserName: '', entityType: 'order', entityId: '' });
+   const [ratingStars, setRatingStars] = useState<1 | 2 | 3 | 4 | 5>(5);
+   const [ratingComment, setRatingComment] = useState('');
    const locationPickerCallbackRef = React.useRef<((loc: PickedLocation) => void) | null>(null);
    const [locationPicker, setLocationPicker] = useState<{ open: boolean; title: string; initial?: { lat: number; lng: number; address?: string } }>({ open: false, title: '' });
 
-   const handleOpenChat = (targetUserId: string, targetUserName: string, listingId?: string, orderId?: string, offerId?: string) => {
-      setChatDrawer({ open: true, targetUserId, targetUserName, listingId, orderId, offerId });
-   };
-
    const handleViewInvoice = (order: Order) => {
       setInvoiceModal({ open: true, order });
+   };
+
+   const handleOpenRating = (payload: { toUserId: string; toUserName: string; entityType: 'order' | 'transport_request'; entityId: string }) => {
+      if (!payload.toUserId) return;
+      setRatingStars(5);
+      setRatingComment('');
+      setRatingModal({ open: true, ...payload });
    };
 
    const handleOpenLocationPicker = (opts: { title: string; initial?: { lat: number; lng: number; address?: string }; onPick: (loc: PickedLocation) => void }) => {
@@ -6034,6 +6625,12 @@ const App = () => {
      if (!order) return;
      const buyerId = currentUser?.id || '';
      const farmerId = order.farmerId || (allUsers.find(u => u.profile?.fullName === order.farmerName)?.id) || '';
+     const farmerProfile: any = (allUsers || []).find(u => u.id === farmerId)?.profile || {};
+     const buyerProfile: any = (allUsers || []).find(u => u.id === buyerId)?.profile || {};
+     const pickupLat = farmerProfile.pickupLat != null ? Number(farmerProfile.pickupLat) : null;
+     const pickupLng = farmerProfile.pickupLng != null ? Number(farmerProfile.pickupLng) : null;
+     const dropLat = buyerProfile.defaultDropLat != null ? Number(buyerProfile.defaultDropLat) : null;
+     const dropLng = buyerProfile.defaultDropLng != null ? Number(buyerProfile.defaultDropLng) : null;
      const weightKg = Number(order.quantity || 0);
      const vehicleType = options?.vehicleType || recommendVehicleType(weightKg);
      const estimatedFare = Number(options?.estimatedFare ?? estimateTransportFare(Number(order.distanceKm || 45), vehicleType));
@@ -6047,6 +6644,10 @@ const App = () => {
         farmerId,
         pickupLocation: order.farmerLocation,
         dropLocation: order.buyerLocation,
+        pickupLat: pickupLat != null && Number.isFinite(pickupLat) ? pickupLat : undefined,
+        pickupLng: pickupLng != null && Number.isFinite(pickupLng) ? pickupLng : undefined,
+        dropLat: dropLat != null && Number.isFinite(dropLat) ? dropLat : undefined,
+        dropLng: dropLng != null && Number.isFinite(dropLng) ? dropLng : undefined,
         weightKg,
         vehicleType,
         mode,
@@ -6384,6 +6985,39 @@ const App = () => {
       }
    };
 
+   const handleSubmitRating = async () => {
+      const fromUserId = currentUser?.id || '';
+      if (!fromUserId) return;
+      if (!ratingModal.toUserId || !ratingModal.entityId) return;
+
+      const now = new Date().toISOString();
+      const ratingId = `rating_${fromUserId}_${ratingModal.toUserId}_${ratingModal.entityType}_${ratingModal.entityId}`;
+      try {
+         await svc.upsertRating({
+            id: ratingId,
+            fromUserId,
+            toUserId: ratingModal.toUserId,
+            entityType: ratingModal.entityType,
+            entityId: ratingModal.entityId,
+            stars: ratingStars,
+            comment: ratingComment || null,
+            createdAt: now
+         });
+
+         const summary = await svc.getRatingSummary(ratingModal.toUserId);
+         const target = allUsers.find(u => u.id === ratingModal.toUserId);
+         if (target?.profile) {
+            const nextProfile: any = { ...(target.profile as any), rating: summary.avg ?? undefined, ratingCount: summary.count };
+            await handleUpdateProfile(target.id, nextProfile);
+         }
+
+         setRatingModal(prev => ({ ...prev, open: false }));
+      } catch (e: any) {
+         const msg = String(e?.message || e || '');
+         alert(msg || 'Failed to submit rating.');
+      }
+   };
+
    return (
       <div className="min-h-screen font-sans text-slate-900 bg-slate-50">
          {connectionError && (
@@ -6398,33 +7032,55 @@ const App = () => {
          {screen === 'admin-login' && <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4"><AdminLogin onLogin={handleAdminLogin} onBack={() => setScreen('landing')} /></div>}
 
          {screen === 'dashboard' && currentUser?.role === 'admin' && <AdminDashboard allUsers={allUsers} listings={listings} orders={orders} disputes={disputes} systemConfig={systemConfig} onUpdateConfig={setSystemConfig} onLogout={handleLogout} onUpdateUserStatus={handleUserStatusChange} onResolveDispute={handleResolveDispute} />}
-        {screen === 'dashboard' && currentUser?.role === 'farmer' && <FarmerDashboard user={currentUser} listings={listings} offers={offers} orders={orders} messages={messages} inventoryItems={inventoryItems} payouts={payouts} transportRequests={transportRequests} allUsers={allUsers} onAddInventoryItem={handleAddInventoryItem} onAddPayout={handleAddPayout} onSendMessage={handleSendMessage} onAddListing={handleAddListing} onUpdateListing={handleUpdateListing} onUpdateListingStatus={handleUpdateListingStatus} onDeleteListing={handleDeleteListing} onAcceptOffer={handleAcceptOffer} onRejectOffer={handleRejectOffer} onCounterOffer={handleCounterOffer} onUpdateProfile={handleUpdateProfile} onRaiseDispute={handleRaiseDispute} onLogout={handleLogout} onAcceptTransportRequest={handleAcceptTransportRequest} onOpenChat={handleOpenChat} onViewInvoice={handleViewInvoice} onUpdateOrderPayment={handleUpdateOrderPayment} onOpenLocationPicker={handleOpenLocationPicker} />}
-        {screen === 'dashboard' && currentUser?.role === 'buyer' && <BuyerDashboard user={currentUser} listings={listings} offers={offers} orders={orders} messages={messages} rfqs={rfqs} transportRequests={transportRequests} transportBids={transportBids} allUsers={allUsers} onAddRfq={handleAddRfq} onSendMessage={handleSendMessage} onPlaceOffer={handlePlaceOffer} onAcceptOffer={handleAcceptOffer} onCounterOffer={handleCounterOffer} onCancelOffer={handleCancelOffer} onUpdateProfile={handleUpdateProfile} onRaiseDispute={handleRaiseDispute} onLogout={handleLogout} onCreateTransportRequest={handleCreateTransportRequest} onAcceptTransportBid={handleAcceptTransportBid} onCounterTransportBid={handleCounterTransportBid} onUpdateTransportRequest={handleUpdateTransportRequest} onOpenChat={handleOpenChat} onViewInvoice={handleViewInvoice} onUpdateOrderPayment={handleUpdateOrderPayment} onDirectBuy={handleDirectBuy} onOpenLocationPicker={handleOpenLocationPicker} />}
-        {screen === 'dashboard' && currentUser?.role === 'transporter' && <TransporterDashboard user={currentUser} orders={orders} messages={messages} routePlans={routePlans} transportRequests={transportRequests} transportBids={transportBids} allUsers={allUsers} onAddRoutePlan={handleAddRoutePlan} onSendMessage={handleSendMessage} onRaiseDispute={handleRaiseDispute} onLogout={handleLogout} onUpdateOrderStatus={handleUpdateOrderStatus} onUpdateProfile={handleUpdateProfile} onAddTransportBid={handleAddTransportBid} onUpdateTransportRequestStatus={handleUpdateTransportRequestStatus} onCounterTransportBid={handleCounterTransportBid} onTransporterAcceptBuyerCounter={handleTransporterAcceptBuyerCounter} onOpenChat={handleOpenChat} />}
+       {screen === 'dashboard' && currentUser?.role === 'farmer' && <FarmerDashboard user={currentUser} listings={listings} offers={offers} orders={orders} inventoryItems={inventoryItems} payouts={payouts} transportRequests={transportRequests} allUsers={allUsers} onAddInventoryItem={handleAddInventoryItem} onAddPayout={handleAddPayout} onAddListing={handleAddListing} onUpdateListing={handleUpdateListing} onUpdateListingStatus={handleUpdateListingStatus} onDeleteListing={handleDeleteListing} onAcceptOffer={handleAcceptOffer} onRejectOffer={handleRejectOffer} onCounterOffer={handleCounterOffer} onUpdateProfile={handleUpdateProfile} onRaiseDispute={handleRaiseDispute} onLogout={handleLogout} onAcceptTransportRequest={handleAcceptTransportRequest} onViewInvoice={handleViewInvoice} onUpdateOrderPayment={handleUpdateOrderPayment} onOpenLocationPicker={handleOpenLocationPicker} onOpenRating={handleOpenRating} />}
+       {screen === 'dashboard' && currentUser?.role === 'buyer' && <BuyerDashboard user={currentUser} listings={listings} offers={offers} orders={orders} rfqs={rfqs} transportRequests={transportRequests} transportBids={transportBids} allUsers={allUsers} onAddRfq={handleAddRfq} onPlaceOffer={handlePlaceOffer} onAcceptOffer={handleAcceptOffer} onCounterOffer={handleCounterOffer} onCancelOffer={handleCancelOffer} onUpdateProfile={handleUpdateProfile} onRaiseDispute={handleRaiseDispute} onLogout={handleLogout} onCreateTransportRequest={handleCreateTransportRequest} onAcceptTransportBid={handleAcceptTransportBid} onCounterTransportBid={handleCounterTransportBid} onUpdateTransportRequest={handleUpdateTransportRequest} onViewInvoice={handleViewInvoice} onUpdateOrderPayment={handleUpdateOrderPayment} onDirectBuy={handleDirectBuy} onOpenLocationPicker={handleOpenLocationPicker} onOpenRating={handleOpenRating} />}
+       {screen === 'dashboard' && currentUser?.role === 'transporter' && <TransporterDashboard user={currentUser} orders={orders} routePlans={routePlans} transportRequests={transportRequests} transportBids={transportBids} allUsers={allUsers} onAddRoutePlan={handleAddRoutePlan} onRaiseDispute={handleRaiseDispute} onLogout={handleLogout} onUpdateOrderStatus={handleUpdateOrderStatus} onUpdateProfile={handleUpdateProfile} onAddTransportBid={handleAddTransportBid} onUpdateTransportRequestStatus={handleUpdateTransportRequestStatus} onCounterTransportBid={handleCounterTransportBid} onTransporterAcceptBuyerCounter={handleTransporterAcceptBuyerCounter} onOpenLocationPicker={handleOpenLocationPicker} onOpenRating={handleOpenRating} />}
          
-         <ChatDrawer 
-            open={chatDrawer.open} 
-            onClose={() => setChatDrawer(prev => ({ ...prev, open: false }))}
-            messages={messages}
-            offers={offers}
-            currentUserId={currentUser?.id || ''}
-            targetUserId={chatDrawer.targetUserId}
-            targetUserName={chatDrawer.targetUserName}
-            listingId={chatDrawer.listingId}
-            orderId={chatDrawer.orderId}
-            offerId={chatDrawer.offerId}
-            onSendMessage={(text, listingId, orderId) => handleSendMessage({
-               toUserId: chatDrawer.targetUserId,
-               text,
-               listingId,
-               orderId
-            })}
-         />
-
          <InvoiceModal 
             order={invoiceModal.order}
             onClose={() => setInvoiceModal({ open: false, order: null })}
          />
+
+         {ratingModal.open && (
+            <div className="fixed inset-0 z-[130] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setRatingModal(prev => ({ ...prev, open: false }))}>
+               <Card className="w-full max-w-lg p-0 overflow-hidden bg-white" onClick={(e: any) => e.stopPropagation()}>
+                  <div className="p-5 border-b border-slate-100 flex items-center justify-between">
+                     <div>
+                        <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Rate</div>
+                        <div className="font-black text-slate-900">{ratingModal.toUserName}</div>
+                     </div>
+                     <button className="p-2 rounded-full border border-slate-200 text-slate-600 hover:bg-slate-50" onClick={() => setRatingModal(prev => ({ ...prev, open: false }))}>
+                        <X className="w-5 h-5" />
+                     </button>
+                  </div>
+                  <div className="p-5 space-y-4">
+                     <div>
+                        <div className="text-xs font-black uppercase tracking-widest text-slate-400 mb-2">Stars</div>
+                        <div className="flex gap-2">
+                           {[1, 2, 3, 4, 5].map((n) => (
+                              <button
+                                 key={n}
+                                 className={`w-12 h-12 rounded-xl border flex items-center justify-center ${n <= ratingStars ? 'bg-amber-50 border-amber-200 text-amber-600' : 'bg-white border-slate-200 text-slate-300'}`}
+                                 onClick={() => setRatingStars(n as any)}
+                              >
+                                 <Star className={`w-6 h-6 ${n <= ratingStars ? 'fill-amber-500 text-amber-500' : ''}`} />
+                              </button>
+                           ))}
+                        </div>
+                     </div>
+                     <div className="space-y-1">
+                        <label className="text-xs font-black uppercase tracking-widest text-slate-400">Comment (optional)</label>
+                        <textarea className="w-full h-28 bg-white border border-slate-300 rounded-xl p-3 outline-none focus:ring-2 focus:ring-amber-500 resize-none" value={ratingComment} onChange={(e) => setRatingComment(e.target.value)} placeholder="Write feedback..." />
+                     </div>
+                  </div>
+                  <div className="p-5 border-t border-slate-100 bg-slate-50 flex justify-end gap-3">
+                     <Button variant="ghost" className="h-10 font-black" onClick={() => setRatingModal(prev => ({ ...prev, open: false }))}>Cancel</Button>
+                     <Button className="h-10 bg-amber-500 hover:bg-amber-600 font-black" onClick={handleSubmitRating}>Submit</Button>
+                  </div>
+               </Card>
+            </div>
+         )}
+
          <LocationPicker
             open={locationPicker.open}
             title={locationPicker.title}

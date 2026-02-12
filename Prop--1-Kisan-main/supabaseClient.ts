@@ -103,11 +103,11 @@ export function getSupabase(): SupabaseClient | null {
   if (cached) return cached
   
   // Try to get from environment
-  let url = (import.meta as any)?.env?.VITE_SUPABASE_URL
-  let key = (import.meta as any)?.env?.VITE_SUPABASE_ANON_KEY
+  const url = import.meta.env.VITE_SUPABASE_URL
+  const key = import.meta.env.VITE_SUPABASE_ANON_KEY
 
   if (!url || !key) {
-    console.error("Supabase Config Missing. Env:", (import.meta as any)?.env);
+    console.error("Supabase Config Missing. Ensure VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY are set.");
     return null
   }
   

@@ -115,6 +115,8 @@ create table if not exists transport_requests (
   "pickupTime" text,
   "pickupConfirmedAt" timestamp with time zone,
   "deliveryConfirmedAt" timestamp with time zone,
+  "assignedAt" timestamp with time zone,
+  "transportPaymentHeldAt" timestamp with time zone,
   "transporterLat" numeric,
   "transporterLng" numeric,
   "transporterHeading" numeric,
@@ -191,8 +193,27 @@ create table if not exists disputes (
   "details" text,
   "amount" numeric,
   "status" text default 'open',
+  "outcome" text,
+  "adminNotes" text,
+  "resolvedAt" timestamp with time zone,
+  "resolvedBy" text,
   "createdAt" timestamp with time zone default timezone('utc'::text, now())
 );
+
+create table if not exists audit_logs (
+  "id" uuid primary key default gen_random_uuid(),
+  "actorId" text,
+  "actorRole" text,
+  "action" text not null,
+  "entityType" text,
+  "entityId" text,
+  "metadata" jsonb,
+  "createdAt" timestamp with time zone default timezone('utc'::text, now())
+);
+
+create index if not exists audit_logs_created_at on audit_logs("createdAt" desc);
+create index if not exists audit_logs_entity on audit_logs("entityType","entityId");
+create index if not exists audit_logs_actor on audit_logs("actorId");
 
 -- MESSAGES TABLE
 create table if not exists messages (

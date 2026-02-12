@@ -306,7 +306,7 @@ export interface Order {
   date: string;
   
   // Payment Status
-  paymentStatus?: 'pending' | 'review' | 'paid';
+  paymentStatus?: 'pending' | 'held' | 'released' | 'refunded' | 'failed' | 'review' | 'paid';
   paymentProof?: string;
 
   // Logistics
@@ -350,6 +350,8 @@ export interface TransportRequest {
   transportPaymentProof?: string;
   pickupDate?: string;
   pickupTime?: string;
+  assignedAt?: string;
+  transportPaymentHeldAt?: string;
   pickupConfirmedAt?: string;
   deliveryConfirmedAt?: string;
   totalTimeMinutes?: number;
@@ -407,6 +409,17 @@ export interface Transaction {
   rating?: number;
 }
 
+export interface AuditLog {
+  id: string;
+  actorId?: string;
+  actorRole?: string;
+  action: string;
+  entityType?: string;
+  entityId?: string;
+  metadata?: any;
+  createdAt: string;
+}
+
 export interface Dispute {
   id: string;
   orderId: string;
@@ -416,6 +429,10 @@ export interface Dispute {
   details?: string; // Detailed description of the issue
   amount?: number; // Dispute amount involved
   status: 'open' | 'resolved';
+  outcome?: 'refund_buyer' | 'release_farmer' | string;
+  adminNotes?: string;
+  resolvedAt?: string;
+  resolvedBy?: string;
   createdAt: string;
 }
 

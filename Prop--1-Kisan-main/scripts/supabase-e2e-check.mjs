@@ -1,8 +1,12 @@
 import { createClient } from "@supabase/supabase-js";
 
-const SUPABASE_URL =
-  process.env.VITE_SUPABASE_URL || "https://ykvatttsnpjrwqfhhysu.supabase.co";
+const SUPABASE_URL = process.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
+
+if (!SUPABASE_URL) {
+  console.error("Missing VITE_SUPABASE_URL in environment. Set it before running.");
+  process.exit(1);
+}
 
 if (!SUPABASE_ANON_KEY) {
   console.error(

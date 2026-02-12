@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { uploadMedia } from './storage';
 import * as svc from './dataService';
+import { getSupabaseConfig, getSupabaseNetworkLog } from './supabaseClient';
 import { createRoot } from 'react-dom/client';
 import {
    Tractor,
@@ -49,6 +50,7 @@ import {
    Ban,
    Check,
    Lock,
+   RefreshCcw,
    Mail,
    Eye,
    EyeOff,
@@ -88,6 +90,26 @@ import {
    CreditCard,
    Upload
 } from 'lucide-react';
+
+type UiPromptRequest = {
+   title?: string
+   message: string
+   placeholder?: string
+   initialValue?: string
+   multiline?: boolean
+}
+
+type UiDialogs = {
+   confirm: (message: string, title?: string) => Promise<boolean>
+   prompt: (req: UiPromptRequest) => Promise<string | null>
+}
+
+const DialogContext = React.createContext<UiDialogs>({
+   confirm: async () => false,
+   prompt: async () => null
+})
+
+const useDialogs = () => React.useContext(DialogContext)
 import { Button, Input, Card, OTPInput } from './components/UI';
 import VoiceInput from './components/VoiceInput';
 // import TradeAnimation from './components/TradeAnimation';
@@ -223,16 +245,34 @@ const LandingPage = ({ onGetStarted, onAdminLogin }: { onGetStarted: (role?: Use
 
 // --- 2. AUTH FLOW COMPONENTS ---
 
-const AdminLogin = ({ onLogin, onBack }: { onLogin: () => void, onBack: () => void }) => {
+const AdminLogin = ({ onLogin, onBack }: { onLogin: (email: string, password: string) => Promise<{ ok: true } | { ok: false; message: string }>, onBack: () => void }) => {
    const [email, setEmail] = useState('');
    const [password, setPassword] = useState('');
+   const [isSubmitting, setIsSubmitting] = useState(false);
+   const [error, setError] = useState<string | null>(null);
+   const activeReqRef = React.useRef(0);
+   const [showDebug, setShowDebug] = useState(false);
+   const [debugText, setDebugText] = useState('');
 
-   const handleSubmit = (e: React.FormEvent) => {
+   const handleSubmit = async (e: React.FormEvent) => {
       e.preventDefault();
-      if (email === 'admin@kisansetu.com' && password === 'admin') {
-         onLogin();
-      } else {
-         alert("Invalid Admin Credentials");
+      const em = email.trim()
+      if (!em || !password) return
+      setError(null)
+      const reqId = Date.now()
+      activeReqRef.current = reqId
+      setIsSubmitting(true)
+      try {
+         const res = await Promise.race([
+            onLogin(em, password),
+            new Promise<{ ok: false; message: string }>((resolve) =>
+               setTimeout(() => resolve({ ok: false, message: 'Login timed out. Try again or switch network/DNS.' }), 60000)
+            )
+         ])
+         if (activeReqRef.current !== reqId) return
+         if (!res.ok) setError(res.message)
+      } finally {
+         if (activeReqRef.current === reqId) setIsSubmitting(false)
       }
    };
 
@@ -250,7 +290,72 @@ const AdminLogin = ({ onLogin, onBack }: { onLogin: () => void, onBack: () => vo
             <form onSubmit={handleSubmit} className="space-y-4">
                <Input label="Admin Email" type="email" value={email} onChange={e => setEmail(e.target.value)} icon={<Mail className="w-4 h-4" />} />
                <Input label="Password" type="password" value={password} onChange={e => setPassword(e.target.value)} icon={<Lock className="w-4 h-4" />} />
-               <Button className="w-full bg-slate-900 hover:bg-slate-800 text-white shadow-slate-900/20 h-12" type="submit">Secure Login</Button>
+               {error && (
+                  <div className="p-3 rounded-xl text-sm font-bold bg-red-50 border border-red-200 text-red-700">
+                     {error}
+                  </div>
+               )}
+               <Button className="w-full bg-slate-900 hover:bg-slate-800 text-white shadow-slate-900/20 h-12" type="submit" disabled={isSubmitting}>
+                  {isSubmitting ? 'Signing in...' : 'Secure Login'}
+               </Button>
+               <button
+                  type="button"
+                  className="w-full text-xs font-black text-slate-600 hover:text-slate-900 underline underline-offset-4"
+                  onClick={() => {
+                     const cfg = getSupabaseConfig()
+                     const ref = (() => {
+                        try { return cfg?.url ? new URL(cfg.url).hostname.split('.')[0] : null } catch { return null }
+                     })()
+                     const keys: string[] = []
+                     try {
+                        if (typeof window !== 'undefined' && window.localStorage && ref) {
+                           const prefix = `sb-${ref}-`
+                           for (let i = 0; i < window.localStorage.length; i++) {
+                              const k = window.localStorage.key(i)
+                              if (k && k.startsWith(prefix)) keys.push(k)
+                           }
+                        }
+                     } catch {
+                     }
+                     const netLog = getSupabaseNetworkLog()
+                     const payload = {
+                        time: new Date().toISOString(),
+                        origin: typeof window !== 'undefined' ? window.location.origin : null,
+                        online: typeof navigator !== 'undefined' ? navigator.onLine : null,
+                        supabaseUrl: cfg?.url || null,
+                        supabaseRef: ref,
+                        sbLocalStorageKeys: keys,
+                        lastNetworkEvents: netLog.slice(-12)
+                     }
+                     const text = JSON.stringify(payload, null, 2)
+                     setDebugText(text)
+                     setShowDebug(v => !v)
+                  }}
+               >
+                  {showDebug ? 'Hide Diagnostics' : 'Show Diagnostics'}
+               </button>
+               {showDebug && (
+                  <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
+                     <div className="flex justify-between items-center">
+                        <div className="text-xs font-black text-slate-700">Diagnostics</div>
+                        <button
+                           type="button"
+                           className="text-xs font-black text-blue-700 hover:underline"
+                           onClick={async () => {
+                              try {
+                                 await navigator.clipboard.writeText(debugText)
+                                 alert('Copied diagnostics to clipboard.')
+                              } catch {
+                                 alert(debugText)
+                              }
+                           }}
+                        >
+                           Copy
+                        </button>
+                     </div>
+                     <pre className="text-[10px] font-bold text-slate-700 whitespace-pre-wrap break-words max-h-48 overflow-auto">{debugText}</pre>
+                  </div>
+               )}
             </form>
          </div>
       </div>
@@ -326,12 +431,10 @@ const AuthWizard = ({ initialRole, initialMode = 'login', onComplete, onBack }: 
 
    React.useEffect(() => {
       if (!isLoading) return;
-      if (elapsedSec < 35) return;
+      if (elapsedSec < 45) return;
       if (forceStopShownRef.current) return;
       forceStopShownRef.current = true;
-      activeAuthRequestIdRef.current = 0;
-      setAuthError('Login is taking too long. This usually means the network request is blocked (AdBlock/VPN/Firewall). Please disable AdBlock/VPN or try Incognito and retry.');
-      setIsLoading(false);
+      setAuthError('Login is taking longer than usual. If you are on office/college Wi‑Fi, try mobile hotspot. You can also retry after the connection banner turns green.');
    }, [elapsedSec, isLoading]);
 
    const handleRoleSelect = (role: UserRole) => {
@@ -357,12 +460,12 @@ const AuthWizard = ({ initialRole, initialMode = 'login', onComplete, onBack }: 
       setIsLoading(true);
 
       try {
-         const net = await withTimeout('connectivity', svc.checkSupabaseConnectivity(6000), 8000);
+         const net = await withTimeout('connectivity', svc.checkSupabaseConnectivity(15000), 20000);
          if (activeAuthRequestIdRef.current !== requestId) return;
          if (!net?.rest?.ok) {
             const authPart = net?.auth?.ok ? `auth=${net.auth.status}` : `auth_error=${net?.auth?.error || 'unknown'}`
             const restPart = net?.rest?.ok ? `rest=${net.rest.status}` : `rest_error=${net?.rest?.error || 'unknown'}`
-            setAuthError(`Cannot reach server (${authPart}, ${restPart}). Disable AdBlock/VPN and allow requests to *.supabase.co.`);
+            setAuthError(`Cannot reach server (${authPart}, ${restPart}). If this persists, your network may be blocking *.supabase.co.`);
             return;
          }
 
@@ -376,7 +479,7 @@ const AuthWizard = ({ initialRole, initialMode = 'login', onComplete, onBack }: 
                return;
             }
 
-            const res: any = await withTimeout('register', svc.registerWithPhonePassword(phone, password, { role: formData.role || undefined, email: null }), 25000);
+            const res: any = await withTimeout('register', svc.registerWithPhonePassword(phone, password, { role: formData.role || undefined, email: null }), 45000);
             if (activeAuthRequestIdRef.current !== requestId) return;
             if (res?.error) {
                const friendly = getAuthErrorMessage(res.error);
@@ -391,7 +494,7 @@ const AuthWizard = ({ initialRole, initialMode = 'login', onComplete, onBack }: 
             setFormData(prev => ({ ...prev, userId }));
             setStep('profile');
          } else {
-            const res: any = await withTimeout('login', svc.loginWithPhonePassword(phone, password), 25000);
+            const res: any = await withTimeout('login', svc.loginWithPhonePassword(phone, password), 45000);
             if (activeAuthRequestIdRef.current !== requestId) return;
             if (res?.error) { setAuthError(getAuthErrorMessage(res.error)); return; }
 
@@ -416,11 +519,9 @@ const AuthWizard = ({ initialRole, initialMode = 'login', onComplete, onBack }: 
             const session = c ? (await c.auth.getSession()).data.session : null
             const sessionUserId = session?.user?.id
             if (label === 'sign_in' && sessionUserId) {
-               const profile = await withTimeout('fetch_profile', svc.getUserById(sessionUserId), 25000)
-               if (profile) {
-                  onComplete(profile)
-                  return
-               }
+               const profRes = await withTimeout('fetch_profile', svc.getUserByIdWithError(sessionUserId), 25000)
+               const profile = (profRes as any)?.data
+               if (profile) { onComplete(profile); return }
                setAuthError("Login succeeded, but your profile is not set up yet. Please complete your profile to continue.");
                setFormData(prev => ({ ...prev, userId: sessionUserId }));
                setStep('profile');
@@ -661,6 +762,7 @@ const TransporterRegistration = ({ onSubmit }: { onSubmit: (profile: Transporter
 // --- 4. DASHBOARDS ---
 
 const FarmerDashboard = ({ user, listings, offers, orders, inventoryItems, payouts, transportRequests, allUsers, onAddInventoryItem, onAddPayout, onAddListing, onUpdateListing, onDeleteListing, onUpdateProfile, onUpdateListingStatus, onAcceptOffer, onRejectOffer, onCounterOffer, onRaiseDispute, onLogout, onAcceptTransportRequest, onViewInvoice, onUpdateOrderPayment, onOpenLocationPicker, onOpenRating }: any) => {
+   const dialogs = useDialogs()
    const [view, setView] = useState('home');
    const [isSidebarOpen, setIsSidebarOpen] = useState(false);
    const myListings = listings.filter((l: any) => l.farmerId === user.id);
@@ -1503,10 +1605,10 @@ const FarmerDashboard = ({ user, listings, offers, orders, inventoryItems, payou
                                        {l.status === 'active' ? <Pause className="w-4 h-4" /> : <PlayCircle className="w-4 h-4" />}
                                     </button>
                                     <button
-                                       onClick={() => {
-                                          if (confirm('Are you sure you want to delete this listing?')) {
-                                             onDeleteListing(l.id);
-                                          }
+                                       onClick={async () => {
+                                          const ok = await dialogs.confirm('Are you sure you want to delete this listing?', 'Delete Listing')
+                                          if (!ok) return
+                                          onDeleteListing(l.id);
                                        }}
                                        className="h-10 w-10 flex items-center justify-center rounded-xl bg-red-50 hover:bg-red-100 text-red-500 transition-colors"
                                        title="Delete Listing"
@@ -1679,19 +1781,20 @@ const FarmerDashboard = ({ user, listings, offers, orders, inventoryItems, payou
                                     <Button variant="outline" size="sm" className="h-9 text-xs font-bold" onClick={() => onViewInvoice(o)}><FileText className="w-4 h-4 mr-2" /> Invoice</Button>
                                     <Button size="sm" className="h-9 text-xs font-bold bg-purple-600 hover:bg-purple-700" onClick={() => setDeliveryTracking({ open: true, orderId: o.id })}><MapPin className="w-4 h-4 mr-2" /> Track Pickup</Button>
                                     
-                                    {/* Payment Verification for Farmer */}
-                                    {o.paymentStatus === 'review' && (
-                                       <Button 
-                                          size="sm" 
-                                          className="h-9 text-xs font-bold bg-amber-500 hover:bg-amber-600 text-white"
-                                          onClick={async () => {
-                                             if (confirm(`Buyer has submitted payment proof: ${o.paymentProof}. Confirm receipt?`)) {
-                                                await onUpdateOrderPayment?.(o.id, 'paid');
-                                             }
-                                          }}
-                                       >
-                                          <CreditCard className="w-4 h-4 mr-2" /> Verify Payment
-                                       </Button>
+                                    {o.paymentStatus === 'held' && (
+                                       <span className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-blue-50 border border-blue-100 text-blue-700 text-xs font-black">
+                                          <Lock className="w-4 h-4" /> Payment Held (Escrow)
+                                       </span>
+                                    )}
+                                    {o.paymentStatus === 'released' && (
+                                       <span className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-green-50 border border-green-100 text-green-700 text-xs font-black">
+                                          <CheckCircle className="w-4 h-4" /> Payment Released
+                                       </span>
+                                    )}
+                                    {o.paymentStatus === 'refunded' && (
+                                       <span className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-slate-600 text-xs font-black">
+                                          <RefreshCcw className="w-4 h-4" /> Refunded to Buyer
+                                       </span>
                                     )}
                                     {o.status === 'delivered' && (
                                        <>
@@ -2739,6 +2842,7 @@ const FarmerDashboard = ({ user, listings, offers, orders, inventoryItems, payou
 
 // Buyer and Transporter Dashboards remain the same
 const BuyerDashboard = ({ user, listings, offers, orders, rfqs, transportRequests, transportBids, allUsers, onAddRfq, onPlaceOffer, onAcceptOffer, onCounterOffer, onCancelOffer, onLogout, onUpdateProfile, onRaiseDispute, onCreateTransportRequest, onAcceptTransportBid, onCounterTransportBid, onUpdateTransportRequest, onViewInvoice, onUpdateOrderPayment, onDirectBuy, onOpenLocationPicker, onOpenRating }: any) => {
+   const dialogs = useDialogs()
    const [view, setView] = useState('home');
    const [searchTerm, setSearchTerm] = useState('');
    const [selectedListing, setSelectedListing] = useState<any>(null);
@@ -2880,7 +2984,7 @@ const BuyerDashboard = ({ user, listings, offers, orders, rfqs, transportRequest
          await onDirectBuy?.(selectedListing.id, qty)
          setShowBuyModal(false)
          setSelectedListing(null)
-         setView('orders')
+         setView('payments')
       } catch (e) {
          console.error(e)
          alert('Failed to place order.')
@@ -2893,7 +2997,7 @@ const BuyerDashboard = ({ user, listings, offers, orders, rfqs, transportRequest
       const order = await onDirectBuy?.(listing.id, qty)
       if (!order) return
       setCartItems(prev => prev.filter(i => i.listingId !== listing.id))
-      setView('orders')
+      setView('payments')
    }
 
    const handleCheckoutCart = async () => {
@@ -2906,7 +3010,7 @@ const BuyerDashboard = ({ user, listings, offers, orders, rfqs, transportRequest
          await onDirectBuy?.(l.id, qty)
       }
       setCartItems([])
-      setView('orders')
+      setView('payments')
    }
 
    return (
@@ -2924,7 +3028,7 @@ const BuyerDashboard = ({ user, listings, offers, orders, rfqs, transportRequest
                   { id: 'home', label: 'Marketplace', icon: Store },
                   { id: 'offers', label: 'My Offers', icon: ShoppingBag, badge: myOffers.length },
                   { id: 'orders', label: 'My Orders', icon: Package, badge: myOrders.length },
-                  { id: 'payments', label: 'Pending Payments', icon: CreditCard, badge: myOrders.filter(o => o.paymentStatus === 'pending').length },
+                  { id: 'payments', label: 'Payments', icon: CreditCard, badge: myOrders.filter(o => o.paymentStatus === 'pending').length },
                   { id: 'cart', label: 'Cart', icon: ShoppingCart, badge: cartCount },
                      { id: 'rfq', label: 'RFQ', icon: FileText },
                      { id: 'shortlists', label: 'Shortlists', icon: Package },
@@ -3148,7 +3252,7 @@ const BuyerDashboard = ({ user, listings, offers, orders, rfqs, transportRequest
 
             {view === 'payments' && (
                <div className="space-y-8 animate-in fade-in">
-                  <h2 className="text-3xl font-bold text-slate-900">Pending Payments</h2>
+                  <h2 className="text-3xl font-bold text-slate-900">Payments</h2>
                   <div className="grid gap-4">
                      {myOrders.filter((o: any) => o.paymentStatus === 'pending').length === 0 ? (
                         <div className="text-center py-20 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
@@ -3156,7 +3260,7 @@ const BuyerDashboard = ({ user, listings, offers, orders, rfqs, transportRequest
                               <CheckCircle className="w-8 h-8" />
                            </div>
                            <h3 className="text-lg font-bold text-slate-900">All caught up!</h3>
-                           <p className="text-slate-500">You have no pending payments.</p>
+                           <p className="text-slate-500">You have no pending product payments.</p>
                         </div>
                      ) : (
                         myOrders.filter((o: any) => o.paymentStatus === 'pending').map((o: any) => (
@@ -3174,10 +3278,10 @@ const BuyerDashboard = ({ user, listings, offers, orders, rfqs, transportRequest
                                     onClick={async () => {
                                        // Simulate Payment Proof Upload
                                        const proof = `TXN-${Date.now()}`;
-                                       if (confirm("Simulate payment transfer for ₹" + o.totalAmount + "?\n(This is a mock transaction)")) {
-                                          await onUpdateOrderPayment?.(o.id, 'review', proof);
-                                          alert("Payment proof submitted! Waiting for Farmer approval.");
-                                       }
+                                       const ok = await dialogs.confirm(`Simulate payment transfer for ₹${Number(o.totalAmount || 0).toLocaleString()}?\n(This is a mock transaction)`, 'Confirm Payment')
+                                       if (!ok) return
+                                       await onUpdateOrderPayment?.(o.id, 'held', proof);
+                                       alert("Payment successful. Amount is held in escrow and will be released after delivery OTP verification.");
                                     }}
                                  >
                                     Pay Now
@@ -3185,6 +3289,83 @@ const BuyerDashboard = ({ user, listings, offers, orders, rfqs, transportRequest
                               </div>
                            </Card>
                         ))
+                     )}
+                  </div>
+
+                  <div className="pt-6 border-t border-slate-100 space-y-4">
+                     <div className="flex items-center justify-between">
+                        <div className="text-lg font-black text-slate-900">Transport Payments</div>
+                        <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">
+                           Pending {(transportRequests || []).filter((r: any) => r.buyerId === user.id && r.mode === 'marketplace' && r.status === 'assigned' && !!r.transporterId && (r.transportPaymentStatus || 'unpaid') === 'unpaid').length}
+                        </div>
+                     </div>
+                     {((transportRequests || []).filter((r: any) => {
+                        if (r.buyerId !== user.id) return false
+                        if (r.mode !== 'marketplace') return false
+                        if (r.status !== 'assigned') return false
+                        if (!r.transporterId) return false
+                        if ((r.transportPaymentStatus || 'unpaid') !== 'unpaid') return false
+                        const ttlMs = 10 * 60 * 1000
+                        const assignedAtMs = r?.assignedAt ? Date.parse(String(r.assignedAt)) : (r?.createdAt ? Date.parse(String(r.createdAt)) : NaN)
+                        return Number.isFinite(assignedAtMs) ? (Date.now() - assignedAtMs) <= ttlMs : true
+                     }).length === 0) ? (
+                        <div className="text-sm text-slate-500 font-medium">No pending transport payments.</div>
+                     ) : (
+                        (transportRequests || [])
+                           .filter((r: any) => {
+                              if (r.buyerId !== user.id) return false
+                              if (r.mode !== 'marketplace') return false
+                              if (r.status !== 'assigned') return false
+                              if (!r.transporterId) return false
+                              if ((r.transportPaymentStatus || 'unpaid') !== 'unpaid') return false
+                              const ttlMs = 10 * 60 * 1000
+                              const assignedAtMs = r?.assignedAt ? Date.parse(String(r.assignedAt)) : (r?.createdAt ? Date.parse(String(r.createdAt)) : NaN)
+                              return Number.isFinite(assignedAtMs) ? (Date.now() - assignedAtMs) <= ttlMs : true
+                           })
+                           .map((r: any) => {
+                              const order = (orders || []).find((o: any) => o.id === r.orderId)
+                              const amount = Number(r.finalFare ?? r.estimatedFare ?? 0)
+                              return (
+                                 <Card key={r.id} className="p-6 border-slate-200">
+                                    <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                                       <div className="min-w-0">
+                                          <div className="flex items-center gap-3 mb-1">
+                                             <div className="text-lg font-black text-slate-900">Transport #{r.id}</div>
+                                             <span className="px-3 py-1 bg-amber-100 text-amber-700 rounded-full text-[10px] font-black uppercase tracking-wider">Payment Pending</span>
+                                          </div>
+                                          <div className="text-sm text-slate-500 font-medium">
+                                             Order #{order?.id || r.orderId} • {order?.cropName || 'Crop'} • {Number(order?.quantity || r.weightKg || 0).toLocaleString()} kg
+                                          </div>
+                                          <div className="text-xs text-slate-500 font-bold mt-1 truncate">{r.pickupLocation} → {r.dropLocation}</div>
+                                       </div>
+                                       <div className="flex items-center gap-3">
+                                          <div className="text-right">
+                                             <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Amount</div>
+                                             <div className="text-xl font-black text-slate-900">₹{amount.toLocaleString()}</div>
+                                          </div>
+                                          <Button
+                                             className="bg-green-600 hover:bg-green-700 font-black"
+                                             onClick={async () => {
+                                                const proof = `TRN-${Date.now()}`
+                                                const ok = await dialogs.confirm(`Simulate transport payment for ₹${amount.toLocaleString()}?\n(This is a mock transaction)`, 'Confirm Transport Payment')
+                                                if (!ok) return
+                                                await onUpdateTransportRequest?.(r.id, {
+                                                   transportPaymentStatus: 'held',
+                                                   transportPaymentProof: proof,
+                                                   transportPaymentHeldAt: new Date().toISOString(),
+                                                   pickupOtp: String(Math.floor(100000 + Math.random() * 900000)),
+                                                   deliveryOtp: String(Math.floor(100000 + Math.random() * 900000))
+                                                })
+                                                alert('Transport payment successful. Amount is held in escrow and will release after delivery OTP verification.')
+                                             }}
+                                          >
+                                             Pay Now
+                                          </Button>
+                                       </div>
+                                    </div>
+                                 </Card>
+                              )
+                           })
                      )}
                   </div>
                </div>
@@ -3622,7 +3803,12 @@ const BuyerDashboard = ({ user, listings, offers, orders, rfqs, transportRequest
                                     <Button className="h-10 bg-blue-600 hover:bg-blue-700 text-xs font-black" onClick={() => { setTransportStep('mode'); setTransportOrderId(o.id); setShowTransportModal(true); }}>Arrange Transport</Button>
                                  )}
                               </div>
-                              {req && req.mode === 'marketplace' && req.status === 'open' && (
+                              {req && req.mode === 'marketplace' && req.status === 'open' && (() => {
+                                 const ttlMs = 10 * 60 * 1000
+                                 const createdAtMs = req?.createdAt ? Date.parse(String(req.createdAt)) : NaN
+                                 if (!Number.isFinite(createdAtMs)) return true
+                                 return (Date.now() - createdAtMs) <= ttlMs
+                              })() && (
                                  <div className="mt-4 space-y-2">
                                     <div className="text-[10px] text-slate-400 font-black uppercase tracking-widest">Transporter Offers</div>
                                     <div className="flex items-center justify-between gap-3 p-3 bg-slate-50 rounded-xl border border-slate-200">
@@ -3668,6 +3854,17 @@ const BuyerDashboard = ({ user, listings, offers, orders, rfqs, transportRequest
                                           ))}
                                        </div>
                                     )}
+                                 </div>
+                              )}
+                              {req && req.mode === 'marketplace' && req.status === 'open' && (() => {
+                                 const ttlMs = 10 * 60 * 1000
+                                 const createdAtMs = req?.createdAt ? Date.parse(String(req.createdAt)) : NaN
+                                 if (!Number.isFinite(createdAtMs)) return false
+                                 return (Date.now() - createdAtMs) > ttlMs
+                              })() && (
+                                 <div className="mt-4 p-4 rounded-2xl bg-amber-50 border border-amber-200">
+                                    <div className="text-sm font-black text-amber-800">This transport request expired (10 minutes limit).</div>
+                                    <div className="text-xs font-bold text-amber-700 mt-1">Please create a new request to continue.</div>
                                  </div>
                               )}
                            </div>
@@ -4224,6 +4421,8 @@ const BuyerDashboard = ({ user, listings, offers, orders, rfqs, transportRequest
                                        onClick={() => {
                                           if (!eligible) return
                                           setTransportPriceValue(String(base))
+                                          setShowTransportModal(false)
+                                          setTransportStep('mode')
                                           setTransportPriceModal({ open: true, type: 'vehicle_offer', orderId: transportOrderId, vehicleType: vt, baseFare: base })
                                        }}
                                     >
@@ -4258,6 +4457,7 @@ const BuyerDashboard = ({ user, listings, offers, orders, rfqs, transportRequest
 };
 
 const TransporterDashboard = ({ user, orders, routePlans, transportRequests, transportBids, allUsers, onAddRoutePlan, onLogout, onUpdateOrderStatus, onUpdateProfile, onRaiseDispute, onAddTransportBid, onUpdateTransportRequestStatus, onCounterTransportBid, onTransporterAcceptBuyerCounter, onOpenLocationPicker, onOpenRating }: any) => {
+   const dialogs = useDialogs()
    const [view, setView] = useState('home');
 
    // Vehicle & Profile State
@@ -4437,11 +4637,17 @@ const TransporterDashboard = ({ user, orders, routePlans, transportRequests, tra
 
    const availableJobs = React.useMemo(() => {
       if (!jobLocation || !Number.isFinite(jobLocation.lat) || !Number.isFinite(jobLocation.lng)) return [];
+      const ttlMs = 10 * 60 * 1000;
+      const now = Date.now();
       const base = (transportRequests || [])
          .filter((r: any) =>
             r.mode === 'marketplace' &&
             r.status === 'open' &&
             !r.transporterId &&
+            (() => {
+               const createdAtMs = r?.createdAt ? Date.parse(String(r.createdAt)) : NaN;
+               return Number.isFinite(createdAtMs) ? (now - createdAtMs) <= ttlMs : true;
+            })() &&
             matchesVehicle(r)
          );
       const withDist = base
@@ -4474,7 +4680,7 @@ const TransporterDashboard = ({ user, orders, routePlans, transportRequests, tra
          const gain = ctx.createGain();
 
          osc.type = 'sine';
-         osc.frequency.value = 880;
+         osc.frequency.value = 740;
          gain.gain.value = 0.0001;
 
          osc.connect(gain);
@@ -4482,11 +4688,12 @@ const TransporterDashboard = ({ user, orders, routePlans, transportRequests, tra
 
          const now = ctx.currentTime;
          gain.gain.setValueAtTime(0.0001, now);
-         gain.gain.exponentialRampToValueAtTime(0.12, now + 0.02);
-         gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.18);
+         gain.gain.exponentialRampToValueAtTime(0.09, now + 0.04);
+         gain.gain.setValueAtTime(0.09, now + 2.85);
+         gain.gain.exponentialRampToValueAtTime(0.0001, now + 3.0);
 
          osc.start(now);
-         osc.stop(now + 0.2);
+         osc.stop(now + 3.05);
       } catch {
       }
    };
@@ -4829,24 +5036,24 @@ const TransporterDashboard = ({ user, orders, routePlans, transportRequests, tra
                                     </div>
                                  </div>
 
-                                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6 py-6 border-y border-slate-100 mb-6 font-medium">
-                                    <div className="flex gap-3 items-center">
-                                       <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-xs">A</div>
-                                       <div>
-                                          <div className="text-[10px] text-slate-400 uppercase font-black">Pickup</div>
-                                          <div className="text-sm font-bold truncate">{r.pickupLocation}</div>
+                                 <div className="grid grid-cols-1 md:grid-cols-[1fr_auto_1fr] gap-4 md:gap-6 py-6 border-y border-slate-100 mb-6 font-medium">
+                                    <div className="flex gap-3 items-start min-w-0">
+                                       <div className="w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center text-xs font-black text-slate-600 shrink-0">A</div>
+                                       <div className="min-w-0">
+                                          <div className="text-[10px] text-slate-400 uppercase font-black tracking-widest">Pickup</div>
+                                          <div className="text-sm font-black text-slate-900 line-clamp-2">{r.pickupLocation}</div>
                                        </div>
                                     </div>
-                                    <div className="flex justify-center items-center py-2 md:py-0">
-                                       <div className="flex items-center gap-2 px-3 py-1 bg-slate-50 rounded-full border border-slate-100 text-[10px] font-black text-slate-500 uppercase">
-                                          <Timer className="w-3 h-3" /> {distanceKm} KM
+                                    <div className="flex justify-start md:justify-center items-center">
+                                       <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-white rounded-full border border-slate-200 text-[10px] font-black text-slate-600 uppercase shadow-sm">
+                                          <Route className="w-3 h-3" /> {Number.isFinite(distanceKm) ? `${Math.round(distanceKm * 10) / 10} KM` : '—'}
                                        </div>
                                     </div>
-                                    <div className="flex gap-3 items-center">
-                                       <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-xs">B</div>
-                                       <div className="text-right md:text-left flex-1">
-                                          <div className="text-[10px] text-slate-400 uppercase font-black">Delivery</div>
-                                          <div className="text-sm font-bold truncate">{r.dropLocation}</div>
+                                    <div className="flex gap-3 items-start min-w-0">
+                                       <div className="w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center text-xs font-black text-slate-600 shrink-0">B</div>
+                                       <div className="min-w-0">
+                                          <div className="text-[10px] text-slate-400 uppercase font-black tracking-widest">Delivery</div>
+                                          <div className="text-sm font-black text-slate-900 line-clamp-2">{r.dropLocation}</div>
                                        </div>
                                     </div>
                                  </div>
@@ -4928,6 +5135,9 @@ const TransporterDashboard = ({ user, orders, routePlans, transportRequests, tra
                   <div className="grid gap-6">
                      {activeDeliveries.map((r: any) => {
                         const order = orders.find((o: any) => o.id === r.orderId);
+                        const transportPaid = (r.transportPaymentStatus || 'unpaid') === 'held' || (r.transportPaymentStatus || 'unpaid') === 'released';
+                        const orderPaid = !order || (order.paymentStatus === 'held' || order.paymentStatus === 'released');
+                        const canProgress = transportPaid && orderPaid;
                         return (
                         <Card key={r.id} className="p-6 border-orange-100 bg-white">
                            <div className="flex flex-col md:flex-row justify-between items-start gap-4 mb-8">
@@ -4946,6 +5156,7 @@ const TransporterDashboard = ({ user, orders, routePlans, transportRequests, tra
                                  <select
                                     className="w-full md:w-56 h-10 bg-slate-100 border-none rounded-xl px-3 text-xs font-bold outline-orange-500"
                                     value={r.status}
+                                    disabled={!canProgress}
                                     onChange={(e) => {
                                        const next = e.target.value as any;
                                        if (next === 'picked_up') {
@@ -4966,6 +5177,11 @@ const TransporterDashboard = ({ user, orders, routePlans, transportRequests, tra
                                     <option value="in_transit">In Transit</option>
                                     <option value="delivered">Delivered</option>
                                  </select>
+                                 {!canProgress && (
+                                    <div className="mt-2 text-[10px] font-black text-amber-700">
+                                       Waiting for buyer payment (product + transport) to start delivery.
+                                    </div>
+                                 )}
                               </div>
                            </div>
 
@@ -5321,8 +5537,9 @@ const TransporterDashboard = ({ user, orders, routePlans, transportRequests, tra
                                           setProfileData(prev => ({ ...prev, vehicles: updated }));
                                           onUpdateProfile?.(user.id, { ...profileData, vehicles: updated });
                                       }}>{v.status === 'active' ? 'Deactivate' : 'Activate'}</Button>
-                                      <Button variant="ghost" size="sm" className="text-red-500 hover:text-red-700 hover:bg-red-50 font-bold" onClick={() => {
-                                          if(!confirm('Delete this vehicle?')) return;
+                                      <Button variant="ghost" size="sm" className="text-red-500 hover:text-red-700 hover:bg-red-50 font-bold" onClick={async () => {
+                                          const ok = await dialogs.confirm('Delete this vehicle?', 'Delete Vehicle')
+                                          if (!ok) return
                                           const updated = (profileData.vehicles || []).filter((pv: Vehicle) => pv.id !== v.id);
                                           setProfileData(prev => ({ ...prev, vehicles: updated }));
                                           onUpdateProfile?.(user.id, { ...profileData, vehicles: updated });
@@ -5783,12 +6000,29 @@ const TransporterDashboard = ({ user, orders, routePlans, transportRequests, tra
    );
 };
 
-const AdminDashboard = ({ allUsers, listings, orders, disputes, systemConfig, onUpdateConfig, onLogout, onUpdateUserStatus, onResolveDispute }: any) => {
-   const [tab, setTab] = useState('disputes'); // Set default to disputes for this task
+const AdminDashboard = ({ adminUser, allUsers, listings, orders, disputes, systemConfig, onUpdateConfig, onLogout, onAdminUpdateUser, onResolveDispute }: any) => {
+   const dialogs = useDialogs()
+   const [tab, setTab] = useState('overview');
    const [selectedDispute, setSelectedDispute] = useState<any>(null);
-   const pendingTransporters = allUsers.filter((u: any) => u.role === 'transporter' && u.profile.approvalStatus === 'pending');
+   const [selectedUser, setSelectedUser] = useState<any>(null);
+   const [userQuery, setUserQuery] = useState('');
+   const [roleFilter, setRoleFilter] = useState<'all' | 'buyer' | 'farmer' | 'transporter' | 'admin'>('all');
+   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'suspended'>('all');
+   const [showDeleted, setShowDeleted] = useState(false);
+   const [auditLogs, setAuditLogs] = useState<any[]>([]);
+   const [auditQuery, setAuditQuery] = useState('');
+   const [selectedAudit, setSelectedAudit] = useState<any>(null);
+   const pendingTransporters = allUsers.filter((u: any) => u.role === 'transporter' && String(u?.profile?.approvalStatus || 'pending') === 'pending');
    const [priceImportStatus, setPriceImportStatus] = useState<{ type: 'idle' | 'loading' | 'done' | 'error'; message?: string }>({ type: 'idle' });
    const [priceImportPreview, setPriceImportPreview] = useState<any[]>([]);
+
+   React.useEffect(() => {
+      if (tab !== 'audit') return;
+      void (async () => {
+         const logs = await svc.getAuditLogs(200)
+         setAuditLogs(logs as any)
+      })();
+   }, [tab]);
 
    const parseCsv = (text: string) => {
       const rows: string[][] = [];
@@ -5842,7 +6076,7 @@ const AdminDashboard = ({ allUsers, listings, orders, disputes, systemConfig, on
          <div className="w-64 bg-slate-900 text-slate-300 flex flex-col p-4">
             <div className="text-white font-bold text-xl mb-8 flex items-center gap-2 px-2"><ShieldCheck className="w-6 h-6 text-nature-500" /> Admin</div>
             <nav className="space-y-1">
-               {['Overview', 'Approvals', 'Users', 'Disputes', 'Prices', 'Settings'].map(t => (
+               {['Overview', 'Approvals', 'Users', 'Disputes', 'Prices', 'Audit', 'Settings'].map(t => (
                   <button key={t} onClick={() => setTab(t.toLowerCase())} className={`w-full text-left px-4 py-3 rounded-xl transition-all ${tab === t.toLowerCase() ? 'bg-nature-600 text-white' : 'hover:bg-slate-800'}`}>{t}</button>
                ))}
             </nav>
@@ -5883,9 +6117,17 @@ const AdminDashboard = ({ allUsers, listings, orders, disputes, systemConfig, on
                                     <>
                                        <Button className="h-9 text-xs w-32" onClick={() => setSelectedDispute(d)}>View Details</Button>
                                        <div className="flex gap-2">
-                                          <button className="text-xs text-green-600 font-medium hover:underline" onClick={() => onResolveDispute(d.id, 'resolved_farmer')}>Release Funds</button>
+                                          <button className="text-xs text-green-600 font-medium hover:underline" onClick={async () => {
+                                             const notes = await dialogs.prompt({ title: 'Resolve Dispute', message: 'Admin notes (optional)', placeholder: 'Write notes...', multiline: true })
+                                             if (notes === null) return
+                                             onResolveDispute(d.id, 'release_farmer', notes)
+                                          }}>Release Funds</button>
                                           <span className="text-slate-300">|</span>
-                                          <button className="text-xs text-red-600 font-medium hover:underline" onClick={() => onResolveDispute(d.id, 'refund_buyer')}>Refund Buyer</button>
+                                          <button className="text-xs text-red-600 font-medium hover:underline" onClick={async () => {
+                                             const notes = await dialogs.prompt({ title: 'Resolve Dispute', message: 'Admin notes (optional)', placeholder: 'Write notes...', multiline: true })
+                                             if (notes === null) return
+                                             onResolveDispute(d.id, 'refund_buyer', notes)
+                                          }}>Refund Buyer</button>
                                        </div>
                                     </>
                                  ) : (
@@ -5957,8 +6199,18 @@ const AdminDashboard = ({ allUsers, listings, orders, disputes, systemConfig, on
                         <Button variant="ghost" onClick={() => setSelectedDispute(null)}>Close</Button>
                         {selectedDispute.status === 'open' && (
                            <>
-                              <Button variant="outline" className="border-red-200 text-red-600 hover:bg-red-50" onClick={() => { onResolveDispute(selectedDispute.id, 'refund_buyer'); setSelectedDispute(null); }}>Refund Buyer</Button>
-                              <Button className="bg-green-600 hover:bg-green-700" onClick={() => { onResolveDispute(selectedDispute.id, 'resolved_farmer'); setSelectedDispute(null); }}>Release to Farmer</Button>
+                              <Button variant="outline" className="border-red-200 text-red-600 hover:bg-red-50" onClick={async () => {
+                                 const notes = await dialogs.prompt({ title: 'Resolve Dispute', message: 'Admin notes (optional)', placeholder: 'Write notes...', multiline: true })
+                                 if (notes === null) return
+                                 onResolveDispute(selectedDispute.id, 'refund_buyer', notes)
+                                 setSelectedDispute(null)
+                              }}>Refund Buyer</Button>
+                              <Button className="bg-green-600 hover:bg-green-700" onClick={async () => {
+                                 const notes = await dialogs.prompt({ title: 'Resolve Dispute', message: 'Admin notes (optional)', placeholder: 'Write notes...', multiline: true })
+                                 if (notes === null) return
+                                 onResolveDispute(selectedDispute.id, 'release_farmer', notes)
+                                 setSelectedDispute(null)
+                              }}>Release to Farmer</Button>
                            </>
                         )}
                      </div>
@@ -6019,6 +6271,17 @@ const AdminDashboard = ({ allUsers, listings, orders, disputes, systemConfig, on
                               setPriceImportStatus({ type: 'loading', message: `Uploading ${mapped.length} records...` });
                               await svc.upsertMarketPrices(mapped);
                               setPriceImportStatus({ type: 'done', message: `Uploaded ${mapped.length} records successfully.` });
+                              try {
+                                 await svc.addAuditLog({
+                                    actorId: String(adminUser?.id || 'admin'),
+                                    actorRole: String(adminUser?.role || 'admin'),
+                                    action: 'admin.market_prices.upload',
+                                    entityType: 'market_prices',
+                                    entityId: undefined,
+                                    metadata: { recordCount: mapped.length, source: 'admin_upload' }
+                                 })
+                              } catch {
+                              }
                            } catch (err: any) {
                               setPriceImportStatus({ type: 'error', message: String(err?.message || err || 'Upload failed.') });
                            }
@@ -6066,10 +6329,469 @@ const AdminDashboard = ({ allUsers, listings, orders, disputes, systemConfig, on
                </div>
             )}
 
-            {/* Placeholder for other tabs */}
-            {tab !== 'disputes' && tab !== 'prices' && (
-               <div className="text-center py-20 text-slate-400">
-                  <p>Content for {tab} tab placeholder.</p>
+            {tab === 'overview' && (
+               <div className="space-y-8 animate-in slide-in-from-right-4">
+                  <div className="grid md:grid-cols-4 gap-4">
+                     {(() => {
+                        const totalUsers = (allUsers || []).length
+                        const activeUsers = (allUsers || []).filter((u: any) => (u.status || 'active') === 'active').length
+                        const suspendedUsers = (allUsers || []).filter((u: any) => (u.status || 'active') !== 'active').length
+                        const openDisputes = (disputes || []).filter((d: any) => (d.status || 'open') === 'open').length
+                        const ordersToday = (orders || []).filter((o: any) => {
+                           const t = Date.parse(String(o.date || o.createdAt || ''))
+                           if (!Number.isFinite(t)) return false
+                           return (Date.now() - t) <= 24 * 60 * 60 * 1000
+                        }).length
+                        const pendingApprovals = pendingTransporters.length
+                        return [
+                           { label: 'Total Users', value: totalUsers, color: 'bg-slate-900', icon: Users },
+                           { label: 'Active Users', value: activeUsers, color: 'bg-green-600', icon: CheckCircle },
+                           { label: 'Suspended', value: suspendedUsers, color: 'bg-amber-600', icon: Ban },
+                           { label: 'Open Disputes', value: openDisputes, color: 'bg-red-600', icon: AlertTriangle },
+                           { label: 'Orders (24h)', value: ordersToday, color: 'bg-blue-600', icon: Package },
+                           { label: 'Pending Approvals', value: pendingApprovals, color: 'bg-purple-600', icon: ShieldCheck }
+                        ]
+                     })().slice(0, 6).map((s: any) => (
+                        <Card key={s.label} className="p-5 relative overflow-hidden">
+                           <div className={`absolute top-0 right-0 w-24 h-24 ${s.color} opacity-[0.06] rounded-bl-full -mr-10 -mt-10`} />
+                           <div className="flex items-center justify-between">
+                              <div>
+                                 <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">{s.label}</div>
+                                 <div className="text-3xl font-black text-slate-900 mt-2">{s.value}</div>
+                              </div>
+                              <div className={`w-12 h-12 rounded-2xl ${s.color} text-white flex items-center justify-center shadow-sm`}>
+                                 <s.icon className="w-6 h-6" />
+                              </div>
+                           </div>
+                        </Card>
+                     ))}
+                  </div>
+
+                  <div className="grid lg:grid-cols-2 gap-6">
+                     <Card className="p-6">
+                        <div className="flex items-center justify-between mb-4">
+                           <div className="font-black text-slate-900">Quick Actions</div>
+                        </div>
+                        <div className="grid sm:grid-cols-2 gap-3">
+                           <Button className="h-12 bg-slate-900 hover:bg-slate-800 font-black" onClick={() => setTab('users')}>Manage Users</Button>
+                           <Button className="h-12 bg-purple-600 hover:bg-purple-700 font-black" onClick={() => setTab('approvals')}>Review Approvals</Button>
+                           <Button className="h-12 bg-red-600 hover:bg-red-700 font-black" onClick={() => setTab('disputes')}>Resolve Disputes</Button>
+                           <Button className="h-12 bg-blue-600 hover:bg-blue-700 font-black" onClick={() => setTab('prices')}>Upload Market Prices</Button>
+                        </div>
+                     </Card>
+                     <Card className="p-6">
+                        <div className="flex items-center justify-between mb-4">
+                           <div className="font-black text-slate-900">System Config</div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4 text-sm">
+                           {[
+                              { k: 'offerExpiryHours', label: 'Offer Expiry (hrs)' },
+                              { k: 'maxListingsPerFarmer', label: 'Max Listings/Farmer' },
+                              { k: 'maxActiveJobsPerTransporter', label: 'Max Jobs/Transporter' },
+                              { k: 'platformFeePercent', label: 'Platform Fee (%)' }
+                           ].map((x: any) => (
+                              <div key={x.k} className="p-4 bg-slate-50 rounded-2xl border border-slate-200">
+                                 <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">{x.label}</div>
+                                 <div className="text-xl font-black text-slate-900 mt-2">{(systemConfig as any)?.[x.k]}</div>
+                              </div>
+                           ))}
+                        </div>
+                        <div className="mt-4">
+                           <Button variant="outline" className="h-11 font-black border-slate-200" onClick={() => setTab('settings')}>Edit Settings</Button>
+                        </div>
+                     </Card>
+                  </div>
+               </div>
+            )}
+
+            {tab === 'approvals' && (
+               <div className="space-y-6 animate-in slide-in-from-right-4">
+                  <div className="flex items-center justify-between">
+                     <div>
+                        <div className="text-lg font-black text-slate-900">Transporter Approvals</div>
+                        <div className="text-sm text-slate-500 font-medium">Approve or reject transporter accounts after document verification.</div>
+                     </div>
+                     <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Pending {pendingTransporters.length}</div>
+                  </div>
+
+                  {pendingTransporters.length === 0 ? (
+                     <div className="text-center py-20 text-slate-400 bg-white rounded-2xl border border-dashed border-slate-200">
+                        No pending approvals.
+                     </div>
+                  ) : (
+                     <div className="grid gap-4">
+                        {pendingTransporters.map((u: any) => {
+                           const p: any = u.profile || {}
+                           const docs: any = p.documents || {}
+                           const docSummary = [
+                              { k: 'license', label: 'DL' },
+                              { k: 'rc', label: 'RC' },
+                              { k: 'insurance', label: 'INS' }
+                           ].map((d: any) => ({ label: d.label, status: String(docs?.[d.k]?.status || 'pending') }))
+                           return (
+                              <Card key={u.id} className="p-6 border-slate-200">
+                                 <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                                    <div className="min-w-0">
+                                       <div className="flex items-center gap-3">
+                                          <div className="text-lg font-black text-slate-900 truncate">{p.fullName || u.phone || u.id}</div>
+                                          <span className="px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest bg-amber-100 text-amber-700">pending</span>
+                                       </div>
+                                       <div className="text-sm text-slate-500 font-medium mt-1">{u.phone || u.email || '—'}</div>
+                                       <div className="flex gap-2 mt-3 flex-wrap">
+                                          {docSummary.map((d: any) => (
+                                             <span key={d.label} className={`px-2 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest ${d.status === 'approved' ? 'bg-green-100 text-green-700' : d.status === 'rejected' ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-600'}`}>
+                                                {d.label}: {d.status}
+                                             </span>
+                                          ))}
+                                       </div>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                       <Button variant="outline" className="h-10 font-black border-slate-200" onClick={() => setSelectedUser(u)}>View</Button>
+                                       <Button
+                                          className="h-10 bg-green-600 hover:bg-green-700 font-black"
+                                          onClick={async () => {
+                                             const ok = await dialogs.confirm(`Approve transporter ${p.fullName || u.phone || u.id}?`, 'Approve Transporter')
+                                             if (!ok) return
+                                             await onAdminUpdateUser?.(u.id, { status: 'active', profilePatch: { approvalStatus: 'approved', approvalReviewedAt: new Date().toISOString() } })
+                                          }}
+                                       >
+                                          Approve
+                                       </Button>
+                                       <Button
+                                          variant="outline"
+                                          className="h-10 font-black border-red-200 text-red-600 hover:bg-red-50"
+                                          onClick={async () => {
+                                             const ok = await dialogs.confirm(`Reject transporter ${p.fullName || u.phone || u.id}?`, 'Reject Transporter')
+                                             if (!ok) return
+                                             const reason = await dialogs.prompt({ title: 'Reject Transporter', message: 'Reject reason (optional)', placeholder: 'Write reason...', multiline: true })
+                                             if (reason === null) return
+                                             await onAdminUpdateUser?.(u.id, { status: 'suspended', profilePatch: { approvalStatus: 'rejected', approvalReason: reason, approvalReviewedAt: new Date().toISOString() } })
+                                          }}
+                                       >
+                                          Reject
+                                       </Button>
+                                    </div>
+                                 </div>
+                              </Card>
+                           )
+                        })}
+                     </div>
+                  )}
+               </div>
+            )}
+
+            {tab === 'users' && (
+               <div className="space-y-6 animate-in slide-in-from-right-4">
+                  <Card className="p-6 border-slate-200">
+                     <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                        <div>
+                           <div className="text-lg font-black text-slate-900">Users</div>
+                           <div className="text-sm text-slate-500 font-medium">Enable/disable accounts and manage approvals safely.</div>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                           <div className="w-72 max-w-full">
+                              <Input label="Search" value={userQuery} onChange={e => setUserQuery(e.target.value)} />
+                           </div>
+                           <select className="h-12 px-3 rounded-xl border border-slate-200 bg-white text-sm font-bold" value={roleFilter} onChange={e => setRoleFilter(e.target.value as any)}>
+                              <option value="all">All Roles</option>
+                              <option value="buyer">Buyer</option>
+                              <option value="farmer">Farmer</option>
+                              <option value="transporter">Transporter</option>
+                              <option value="admin">Admin</option>
+                           </select>
+                           <select className="h-12 px-3 rounded-xl border border-slate-200 bg-white text-sm font-bold" value={statusFilter} onChange={e => setStatusFilter(e.target.value as any)}>
+                              <option value="all">All Status</option>
+                              <option value="active">Active</option>
+                              <option value="suspended">Suspended</option>
+                           </select>
+                           <button type="button" className={`h-12 px-4 rounded-xl border text-sm font-black ${showDeleted ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-700 border-slate-200'}`} onClick={() => setShowDeleted(v => !v)}>
+                              Show Deleted
+                           </button>
+                        </div>
+                     </div>
+                  </Card>
+
+                  <Card className="p-0 overflow-hidden border-slate-200">
+                     {(() => {
+                        const q = userQuery.trim().toLowerCase()
+                        const rows = (allUsers || [])
+                           .filter((u: any) => roleFilter === 'all' ? true : u.role === roleFilter)
+                           .filter((u: any) => statusFilter === 'all' ? true : (u.status || 'active') === statusFilter)
+                           .filter((u: any) => showDeleted ? true : !u?.profile?.isDeleted)
+                           .filter((u: any) => {
+                              if (!q) return true
+                              const p: any = u.profile || {}
+                              return [u.id, u.phone, u.email, u.role, u.status, p.fullName, p.businessName, p.city, p.state]
+                                 .filter(Boolean)
+                                 .some((x: any) => String(x).toLowerCase().includes(q))
+                           })
+                           .sort((a: any, b: any) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')))
+                        return rows
+                     })().length === 0 ? (
+                        <div className="p-10 text-center text-slate-400 font-bold">No users found.</div>
+                     ) : (
+                        <div className="overflow-x-auto">
+                           <table className="w-full text-left text-sm">
+                              <thead className="text-[10px] font-black uppercase tracking-widest text-slate-400 border-b border-slate-100 bg-white">
+                                 <tr>
+                                    <th className="py-3 px-5">User</th>
+                                    <th className="py-3 px-5">Role</th>
+                                    <th className="py-3 px-5">Status</th>
+                                    <th className="py-3 px-5">Approval</th>
+                                    <th className="py-3 px-5 text-right">Actions</th>
+                                 </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-50 bg-white">
+                                 {(() => {
+                                    const q = userQuery.trim().toLowerCase()
+                                    return (allUsers || [])
+                                       .filter((u: any) => roleFilter === 'all' ? true : u.role === roleFilter)
+                                       .filter((u: any) => statusFilter === 'all' ? true : (u.status || 'active') === statusFilter)
+                                       .filter((u: any) => showDeleted ? true : !u?.profile?.isDeleted)
+                                       .filter((u: any) => {
+                                          if (!q) return true
+                                          const p: any = u.profile || {}
+                                          return [u.id, u.phone, u.email, u.role, u.status, p.fullName, p.businessName, p.city, p.state]
+                                             .filter(Boolean)
+                                             .some((x: any) => String(x).toLowerCase().includes(q))
+                                       })
+                                       .sort((a: any, b: any) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')))
+                                 })().map((u: any) => {
+                                    const p: any = u.profile || {}
+                                    const isActive = (u.status || 'active') === 'active'
+                                    const isDeleted = !!p.isDeleted
+                                    const approval = u.role === 'transporter' ? String(p.approvalStatus || 'pending') : '—'
+                                    return (
+                                       <tr key={u.id} className={`${isDeleted ? 'bg-slate-50' : ''}`}>
+                                          <td className="py-4 px-5">
+                                             <div className="font-black text-slate-900">{p.fullName || u.phone || u.email || u.id}</div>
+                                             <div className="text-xs text-slate-500 font-bold">{u.phone || u.email || '—'}</div>
+                                          </td>
+                                          <td className="py-4 px-5 font-black text-slate-700">{u.role}</td>
+                                          <td className="py-4 px-5">
+                                             <span className={`px-2 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest ${isActive ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
+                                                {isActive ? 'active' : 'suspended'}
+                                             </span>
+                                          </td>
+                                          <td className="py-4 px-5">
+                                             <span className={`px-2 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest ${approval === 'approved' ? 'bg-green-100 text-green-700' : approval === 'rejected' ? 'bg-red-100 text-red-700' : approval === 'pending' ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-600'}`}>
+                                                {approval}
+                                             </span>
+                                          </td>
+                                          <td className="py-4 px-5">
+                                             <div className="flex justify-end gap-2">
+                                                <Button variant="outline" className="h-9 text-xs font-black border-slate-200" onClick={() => setSelectedUser(u)}>View</Button>
+                                                {isActive ? (
+                                                   <Button variant="outline" className="h-9 text-xs font-black border-amber-200 text-amber-700 hover:bg-amber-50" onClick={async () => {
+                                                      const ok = await dialogs.confirm(`Suspend ${p.fullName || u.phone || u.id}?`, 'Suspend User')
+                                                      if (!ok) return
+                                                      await onAdminUpdateUser?.(u.id, { status: 'suspended' })
+                                                   }}>Suspend</Button>
+                                                ) : (
+                                                   <Button className="h-9 text-xs font-black bg-green-600 hover:bg-green-700" onClick={async () => {
+                                                      const ok = await dialogs.confirm(`Activate ${p.fullName || u.phone || u.id}?`, 'Activate User')
+                                                      if (!ok) return
+                                                      await onAdminUpdateUser?.(u.id, { status: 'active' })
+                                                   }}>Activate</Button>
+                                                )}
+                                                {!isDeleted ? (
+                                                   <Button variant="outline" className="h-9 text-xs font-black border-red-200 text-red-600 hover:bg-red-50" onClick={async () => {
+                                                      const ok = await dialogs.confirm(`Soft-delete ${p.fullName || u.phone || u.id}?`, 'Soft Delete User')
+                                                      if (!ok) return
+                                                      const reason = await dialogs.prompt({ title: 'Soft Delete User', message: 'Delete reason (optional)', placeholder: 'Write reason...', multiline: true })
+                                                      if (reason === null) return
+                                                      await onAdminUpdateUser?.(u.id, { status: 'suspended', profilePatch: { isDeleted: true, deletedAt: new Date().toISOString(), deletedReason: reason } })
+                                                   }}>Delete</Button>
+                                                ) : (
+                                                   <Button variant="outline" className="h-9 text-xs font-black border-slate-200" onClick={async () => {
+                                                      const ok = await dialogs.confirm(`Restore ${p.fullName || u.phone || u.id}?`, 'Restore User')
+                                                      if (!ok) return
+                                                      await onAdminUpdateUser?.(u.id, { status: 'active', profilePatch: { isDeleted: false, deletedAt: null, deletedReason: null } })
+                                                   }}>Restore</Button>
+                                                )}
+                                             </div>
+                                          </td>
+                                       </tr>
+                                    )
+                                 })}
+                              </tbody>
+                           </table>
+                        </div>
+                     )}
+                  </Card>
+               </div>
+            )}
+
+            {tab === 'audit' && (
+               <div className="space-y-6 animate-in slide-in-from-right-4">
+                  <Card className="p-6 border-slate-200">
+                     <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                        <div>
+                           <div className="text-lg font-black text-slate-900">Audit Logs</div>
+                           <div className="text-sm text-slate-500 font-medium">Track every admin action for accountability.</div>
+                        </div>
+                        <div className="flex items-center gap-3">
+                           <div className="w-80 max-w-full">
+                              <Input label="Search" value={auditQuery} onChange={e => setAuditQuery(e.target.value)} />
+                           </div>
+                           <Button
+                              variant="outline"
+                              className="h-12 font-black border-slate-200"
+                              onClick={async () => {
+                                 const logs = await svc.getAuditLogs(200)
+                                 setAuditLogs(logs as any)
+                              }}
+                           >
+                              Refresh
+                           </Button>
+                        </div>
+                     </div>
+                  </Card>
+
+                  <Card className="p-0 overflow-hidden border-slate-200">
+                     {(() => {
+                        const q = auditQuery.trim().toLowerCase()
+                        const rows = (auditLogs || []).filter((r: any) => {
+                           if (!q) return true
+                           return [r.action, r.actorId, r.actorRole, r.entityType, r.entityId, r.createdAt, JSON.stringify(r.metadata || {})]
+                              .filter(Boolean)
+                              .some((x: any) => String(x).toLowerCase().includes(q))
+                        })
+                        if (rows.length === 0) {
+                           return <div className="p-10 text-center text-slate-400 font-bold">No audit logs found.</div>
+                        }
+                        return (
+                           <div className="overflow-x-auto bg-white">
+                              <table className="w-full text-left text-sm">
+                                 <thead className="text-[10px] font-black uppercase tracking-widest text-slate-400 border-b border-slate-100 bg-white">
+                                    <tr>
+                                       <th className="py-3 px-5">Time</th>
+                                       <th className="py-3 px-5">Action</th>
+                                       <th className="py-3 px-5">Actor</th>
+                                       <th className="py-3 px-5">Entity</th>
+                                       <th className="py-3 px-5 text-right">Details</th>
+                                    </tr>
+                                 </thead>
+                                 <tbody className="divide-y divide-slate-50">
+                                    {rows.map((r: any) => (
+                                       <tr key={r.id} className="hover:bg-slate-50 cursor-pointer" onClick={() => setSelectedAudit(r)}>
+                                          <td className="py-4 px-5 font-bold text-slate-600">{r.createdAt ? new Date(r.createdAt).toLocaleString() : '—'}</td>
+                                          <td className="py-4 px-5 font-black text-slate-900">{r.action}</td>
+                                          <td className="py-4 px-5">
+                                             <div className="font-black text-slate-700">{r.actorId || '—'}</div>
+                                             <div className="text-xs font-bold text-slate-400">{r.actorRole || '—'}</div>
+                                          </td>
+                                          <td className="py-4 px-5 font-bold text-slate-600">{[r.entityType, r.entityId].filter(Boolean).join(': ') || '—'}</td>
+                                          <td className="py-4 px-5 text-right">
+                                             <span className="text-xs font-black text-blue-700 hover:underline">View</span>
+                                          </td>
+                                       </tr>
+                                    ))}
+                                 </tbody>
+                              </table>
+                           </div>
+                        )
+                     })()}
+                  </Card>
+               </div>
+            )}
+
+            {tab === 'settings' && (
+               <div className="space-y-6 animate-in slide-in-from-right-4">
+                  <Card className="p-6 border-slate-200 space-y-6">
+                     <div>
+                        <div className="text-lg font-black text-slate-900">Platform Settings</div>
+                        <div className="text-sm text-slate-500 font-medium">These settings control platform limits and fees (local config).</div>
+                     </div>
+                     <div className="grid md:grid-cols-2 gap-4">
+                        <Input label="Offer Expiry (hours)" type="number" value={String(systemConfig.offerExpiryHours)} onChange={e => onUpdateConfig({ ...systemConfig, offerExpiryHours: Number(e.target.value || 0) })} />
+                        <Input label="Max Listings per Farmer" type="number" value={String(systemConfig.maxListingsPerFarmer)} onChange={e => onUpdateConfig({ ...systemConfig, maxListingsPerFarmer: Number(e.target.value || 0) })} />
+                        <Input label="Max Active Jobs per Transporter" type="number" value={String(systemConfig.maxActiveJobsPerTransporter)} onChange={e => onUpdateConfig({ ...systemConfig, maxActiveJobsPerTransporter: Number(e.target.value || 0) })} />
+                        <Input label="Platform Fee (%)" type="number" value={String(systemConfig.platformFeePercent)} onChange={e => onUpdateConfig({ ...systemConfig, platformFeePercent: Number(e.target.value || 0) })} />
+                     </div>
+                  </Card>
+               </div>
+            )}
+
+            {selectedAudit && (
+               <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in">
+                  <div className="bg-white rounded-2xl w-full max-w-2xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
+                     <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+                        <div className="min-w-0">
+                           <div className="text-xl font-black text-slate-900 truncate">{selectedAudit.action}</div>
+                           <div className="text-sm text-slate-500 font-bold">{selectedAudit.createdAt ? new Date(selectedAudit.createdAt).toLocaleString() : '—'}</div>
+                        </div>
+                        <button onClick={() => setSelectedAudit(null)} className="p-2 hover:bg-slate-200 rounded-full"><X className="w-5 h-5" /></button>
+                     </div>
+                     <div className="p-6 overflow-y-auto space-y-4">
+                        <div className="grid md:grid-cols-2 gap-4">
+                           <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl">
+                              <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Actor</div>
+                              <div className="mt-2 text-sm font-black text-slate-900">{selectedAudit.actorId || '—'}</div>
+                              <div className="text-xs font-bold text-slate-500">{selectedAudit.actorRole || '—'}</div>
+                           </div>
+                           <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl">
+                              <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Entity</div>
+                              <div className="mt-2 text-sm font-black text-slate-900">{[selectedAudit.entityType, selectedAudit.entityId].filter(Boolean).join(': ') || '—'}</div>
+                           </div>
+                        </div>
+                        <div className="p-4 bg-white border border-slate-200 rounded-2xl">
+                           <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Metadata</div>
+                           <pre className="text-xs font-bold text-slate-700 whitespace-pre-wrap break-words">{JSON.stringify(selectedAudit.metadata || {}, null, 2)}</pre>
+                        </div>
+                     </div>
+                  </div>
+               </div>
+            )}
+
+            {selectedUser && (
+               <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in">
+                  <div className="bg-white rounded-2xl w-full max-w-2xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
+                     <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+                        <div className="min-w-0">
+                           <div className="text-xl font-black text-slate-900 truncate">{selectedUser?.profile?.fullName || selectedUser?.phone || selectedUser?.email || selectedUser?.id}</div>
+                           <div className="text-sm text-slate-500 font-bold">{selectedUser?.role} • {(selectedUser?.status || 'active')}</div>
+                        </div>
+                        <button onClick={() => setSelectedUser(null)} className="p-2 hover:bg-slate-200 rounded-full"><X className="w-5 h-5" /></button>
+                     </div>
+                     <div className="p-6 overflow-y-auto space-y-6">
+                        <div className="grid md:grid-cols-2 gap-4">
+                           <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl">
+                              <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Contact</div>
+                              <div className="mt-2 text-sm font-black text-slate-900">{selectedUser?.phone || '—'}</div>
+                              <div className="text-sm font-black text-slate-900">{selectedUser?.email || '—'}</div>
+                           </div>
+                           <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl">
+                              <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Created</div>
+                              <div className="mt-2 text-sm font-black text-slate-900">{selectedUser?.createdAt ? new Date(selectedUser.createdAt).toLocaleString() : '—'}</div>
+                           </div>
+                        </div>
+                        {selectedUser?.role === 'transporter' && (
+                           <div className="p-4 bg-white border border-slate-200 rounded-2xl">
+                              <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Transporter Approval</div>
+                              <div className="flex flex-wrap items-center gap-2">
+                                 <span className="px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest bg-slate-100 text-slate-600">
+                                    {String(selectedUser?.profile?.approvalStatus || 'pending')}
+                                 </span>
+                                 <Button className="h-10 bg-green-600 hover:bg-green-700 font-black" onClick={async () => {
+                                    const ok = await dialogs.confirm('Approve this transporter?', 'Approve Transporter')
+                                    if (!ok) return
+                                    await onAdminUpdateUser?.(selectedUser.id, { status: 'active', profilePatch: { approvalStatus: 'approved', approvalReviewedAt: new Date().toISOString() } })
+                                    setSelectedUser(null)
+                                 }}>Approve</Button>
+                                 <Button variant="outline" className="h-10 font-black border-red-200 text-red-600 hover:bg-red-50" onClick={async () => {
+                                    const ok = await dialogs.confirm('Reject this transporter?', 'Reject Transporter')
+                                    if (!ok) return
+                                    const reason = await dialogs.prompt({ title: 'Reject Transporter', message: 'Reject reason (optional)', placeholder: 'Write reason...', multiline: true })
+                                    if (reason === null) return
+                                    await onAdminUpdateUser?.(selectedUser.id, { status: 'suspended', profilePatch: { approvalStatus: 'rejected', approvalReason: reason, approvalReviewedAt: new Date().toISOString() } })
+                                    setSelectedUser(null)
+                                 }}>Reject</Button>
+                              </div>
+                           </div>
+                        )}
+                     </div>
+                  </div>
                </div>
             )}
          </div>
@@ -6083,6 +6805,7 @@ const App = () => {
    const [selectedRole, setSelectedRole] = useState<UserRole>(null);
    const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
    const [connectionError, setConnectionError] = useState<string | null>(null);
+   const [isCheckingConnection, setIsCheckingConnection] = useState(false);
    const supabaseAvailable = !!getSupabase();
 
    // STATE
@@ -6107,6 +6830,46 @@ const App = () => {
    const locationPickerCallbackRef = React.useRef<((loc: PickedLocation) => void) | null>(null);
    const [locationPicker, setLocationPicker] = useState<{ open: boolean; title: string; initial?: { lat: number; lng: number; address?: string } }>({ open: false, title: '' });
 
+   const dialogResolveRef = React.useRef<((value: any) => void) | null>(null)
+   const [dialog, setDialog] = useState<null | { kind: 'confirm'; title?: string; message: string } | { kind: 'prompt'; req: UiPromptRequest; value: string }> (null)
+
+   const dialogs = React.useMemo<UiDialogs>(() => ({
+      confirm: (message: string, title?: string) => new Promise<boolean>((resolve) => {
+         dialogResolveRef.current = resolve
+         setDialog({ kind: 'confirm', title, message })
+      }),
+      prompt: (req: UiPromptRequest) => new Promise<string | null>((resolve) => {
+         dialogResolveRef.current = resolve
+         setDialog({ kind: 'prompt', req, value: String(req.initialValue ?? '') })
+      })
+   }), [])
+
+   const runConnectionCheck = React.useCallback(async () => {
+      if (!supabaseAvailable) return
+      setIsCheckingConnection(true)
+      try {
+         const net = await svc.checkSupabaseConnectivity(15000)
+         const authOk = !!net?.auth?.ok
+         const restOk = !!net?.rest?.ok
+         if (authOk && restOk) {
+            setConnectionError(null)
+            return
+         }
+         const authPart = authOk ? `auth=${net.auth.status}` : `auth_error=${net?.auth?.error || 'unknown'}`
+         const restPart = restOk ? `rest=${net.rest.status}` : `rest_error=${net?.rest?.error || 'unknown'}`
+         const hint = (net?.auth?.error === 'timeout' || net?.rest?.error === 'timeout')
+            ? 'Network timeout. Check VPN/AdBlock and allow *.supabase.co.'
+            : 'Disable AdBlock/VPN and allow *.supabase.co.'
+         setConnectionError(`Supabase connection issue: ${authPart}, ${restPart}. ${hint}`)
+      } finally {
+         setIsCheckingConnection(false)
+      }
+   }, [supabaseAvailable])
+
+   React.useEffect(() => {
+      void runConnectionCheck()
+   }, [runConnectionCheck])
+
    const handleViewInvoice = (order: Order) => {
       setInvoiceModal({ open: true, order });
    };
@@ -6127,8 +6890,7 @@ const App = () => {
    React.useEffect(() => {
       // Listen for auth state changes (e.g. Magic Link login)
       const c = getSupabase();
-      if (c) {
-         c.auth.onAuthStateChange(async (event, session) => {
+      const subscription = c ? c.auth.onAuthStateChange(async (event, session) => {
             console.log("Auth State Changed:", event, session?.user?.id);
             if (event === 'SIGNED_IN' && session?.user) {
                const user = await svc.getCurrentUser();
@@ -6137,24 +6899,7 @@ const App = () => {
                   setScreen('dashboard');
                }
             }
-         });
-      }
-
-      // Health Check
-      const checkConnection = async () => {
-         if (!supabaseAvailable) return;
-         const net = await svc.checkSupabaseConnectivity(6000)
-         const authOk = !!net?.auth?.ok
-         const restOk = !!net?.rest?.ok
-         if (authOk && restOk) {
-            setConnectionError(null)
-            return
-         }
-         const authPart = authOk ? `auth=${net.auth.status}` : `auth_error=${net?.auth?.error || 'unknown'}`
-         const restPart = restOk ? `rest=${net.rest.status}` : `rest_error=${net?.rest?.error || 'unknown'}`
-         setConnectionError(`Supabase connection issue: ${authPart}, ${restPart}. Disable AdBlock/VPN and allow *.supabase.co.`)
-      };
-      checkConnection();
+         }) : null
 
       if (!supabaseAvailable) {
          setConnectionError("Supabase is not configured. Please set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.");
@@ -6198,7 +6943,75 @@ const App = () => {
          if (tb) setTransportBids(tb);
       };
       loadData();
+      return () => {
+         try {
+            subscription?.data?.subscription?.unsubscribe?.()
+         } catch {
+         }
+      }
    }, [supabaseAvailable]);
+
+   const expiredTransportRequestIdsRef = React.useRef<Set<string>>(new Set());
+   React.useEffect(() => {
+      if (!supabaseAvailable) return;
+      if (screen !== 'dashboard') return;
+      const ttlMs = 10 * 60 * 1000;
+      const now = Date.now();
+      const candidates = (transportRequests || []).filter((r: any) => {
+         if (r?.mode !== 'marketplace') return false;
+         if (r?.status !== 'open') return false;
+         if (r?.transporterId) return false;
+         const createdAtMs = r?.createdAt ? Date.parse(String(r.createdAt)) : NaN;
+         if (!Number.isFinite(createdAtMs)) return false;
+         return (now - createdAtMs) > ttlMs;
+      });
+      if (candidates.length === 0) return;
+
+      void (async () => {
+         for (const r of candidates) {
+            if (expiredTransportRequestIdsRef.current.has(r.id)) continue;
+            expiredTransportRequestIdsRef.current.add(r.id);
+            try {
+               const saved = await svc.updateTransportRequest(r.id, { status: 'cancelled' } as any);
+               const updated = saved ? saved : ({ ...r, status: 'cancelled' } as any);
+               setTransportRequests(prev => prev.map(x => x.id === updated.id ? updated : x));
+            } catch {
+            }
+         }
+      })();
+   }, [supabaseAvailable, screen, transportRequests]);
+
+   const unpaidAssignedTransportRequestIdsRef = React.useRef<Set<string>>(new Set());
+   React.useEffect(() => {
+      if (!supabaseAvailable) return;
+      if (screen !== 'dashboard') return;
+      const ttlMs = 10 * 60 * 1000;
+      const now = Date.now();
+      const candidates = (transportRequests || []).filter((r: any) => {
+         if (r?.mode !== 'marketplace') return false;
+         if (r?.status !== 'assigned') return false;
+         if (!r?.transporterId) return false;
+         if ((r?.transportPaymentStatus || 'unpaid') !== 'unpaid') return false;
+         const assignedAtMs = r?.assignedAt ? Date.parse(String(r.assignedAt)) : (r?.createdAt ? Date.parse(String(r.createdAt)) : NaN);
+         if (!Number.isFinite(assignedAtMs)) return false;
+         return (now - assignedAtMs) > ttlMs;
+      });
+      if (candidates.length === 0) return;
+
+      void (async () => {
+         for (const r of candidates) {
+            if (unpaidAssignedTransportRequestIdsRef.current.has(r.id)) continue;
+            unpaidAssignedTransportRequestIdsRef.current.add(r.id);
+            try {
+               const patch: any = { status: 'cancelled' };
+               const saved = await svc.updateTransportRequest(r.id, patch);
+               const updated = saved ? saved : ({ ...r, ...patch } as any);
+               setTransportRequests(prev => prev.map(x => x.id === updated.id ? updated : x));
+            } catch {
+            }
+         }
+      })();
+   }, [supabaseAvailable, screen, transportRequests]);
 
    const deliveryPollTimerRef = React.useRef<any>(null);
    const deliveryPollInFlightRef = React.useRef(false);
@@ -6291,7 +7104,70 @@ const App = () => {
          console.error(e);
       }
    };
-   const handleAdminLogin = () => { setCurrentUser({ id: 'admin', phone: '0000', role: 'admin', status: 'active', createdAt: new Date().toISOString() }); setScreen('dashboard'); };
+  const handleAdminLogin = async (email: string, password: string) => {
+     const withTimeout = async <T,>(label: string, promise: Promise<T>, ms: number) => {
+        let timer: any
+        try {
+           return await Promise.race([
+              promise,
+              new Promise<T>((_, reject) => {
+                 timer = setTimeout(() => reject(new Error(`request_timeout:${label}`)), ms)
+              })
+           ])
+        } finally {
+           if (timer) clearTimeout(timer)
+        }
+     }
+
+     try {
+        const net = await withTimeout('connectivity', svc.checkSupabaseConnectivity(15000), 20000)
+        const authOk = !!(net as any)?.auth?.ok
+        const restOk = !!(net as any)?.rest?.ok
+        if (!authOk || !restOk) {
+           const authPart = authOk ? `auth=${(net as any).auth.status}` : `auth_error=${(net as any)?.auth?.error || 'unknown'}`
+           const restPart = restOk ? `rest=${(net as any).rest.status}` : `rest_error=${(net as any)?.rest?.error || 'unknown'}`
+           return { ok: false as const, message: `Cannot reach server (${authPart}, ${restPart}). Your network may be blocking *.supabase.co.` }
+        }
+
+        const res: any = await withTimeout('admin_sign_in', svc.signInWithPassword(email, password), 45000)
+        if (res?.error) {
+           const msg = String(res?.error?.message || '')
+           if (msg.toLowerCase().includes('invalid login credentials')) {
+              return { ok: false as const, message: 'Invalid email/password. Reset the password in Supabase Auth and try again.' }
+           }
+           return { ok: false as const, message: msg || 'Admin sign-in failed.' }
+        }
+
+        const authUserId = res?.data?.user?.id || res?.data?.session?.user?.id
+        const profRes = authUserId
+           ? await withTimeout('fetch_profile', svc.getUserByIdWithError(String(authUserId)), 45000)
+           : await withTimeout('fetch_profile', Promise.resolve({ data: await svc.getCurrentUser(), error: null } as any), 45000)
+        const user = (profRes as any)?.data
+        const profErr = (profRes as any)?.error
+        if (!user) {
+           await svc.signOut()
+           if (profErr) {
+              const msg = String((profErr as any)?.message || profErr || '')
+              return { ok: false as const, message: `Cannot load admin profile from users table. ${msg || 'Unknown error.'}` }
+           }
+           return { ok: false as const, message: 'Admin user profile not found in users table. Ensure public.users.id matches Auth UID.' }
+        }
+        if (user.role !== 'admin' || (user.status || 'active') !== 'active') {
+           await svc.signOut()
+           return { ok: false as const, message: 'Access denied. This account is not an active admin.' }
+        }
+        setCurrentUser(user as any)
+        setScreen('dashboard')
+        return { ok: true as const }
+     } catch (e: any) {
+        const message = String(e?.message || e || '')
+        if (message.startsWith('request_timeout:')) {
+           const label = message.split(':')[1] || 'request'
+           return { ok: false as const, message: `Request timed out during ${label}. Try hotspot / change DNS / disable firewall.` }
+        }
+        return { ok: false as const, message: message || 'Admin sign-in failed.' }
+     }
+  };
   const handleLogout = async () => { await svc.signOut(); setCurrentUser(null); setScreen('landing'); };
    const handleAddListing = async (l: any) => {
       try {
@@ -6584,17 +7460,48 @@ const App = () => {
        }
    };
 
-   const handleUserStatusChange = (userId: string, newStatus: 'active' | 'suspended', approvalStatus?: string) => {
-      setAllUsers(allUsers.map(u => {
-         if (u.id === userId) {
-            const updated = { ...u, status: newStatus };
-            if (approvalStatus && u.profile && 'approvalStatus' in u.profile) {
-               (updated.profile as any).approvalStatus = approvalStatus;
-            }
-            return updated;
+   const handleAdminUpdateUser = async (userId: string, updates: { status?: 'active' | 'suspended'; role?: UserRole; profilePatch?: any }) => {
+      const current = (allUsers || []).find(u => u.id === userId)
+      if (!current) return
+      const nextProfile = updates?.profilePatch ? ({ ...(current.profile || {}), ...(updates.profilePatch || {}) }) : current.profile
+      const patch: any = {}
+      if (updates.status) patch.status = updates.status
+      if (updates.role) patch.role = updates.role
+      if (updates.profilePatch) patch.profile = nextProfile
+
+      const optimistic = { ...current, ...patch, profile: nextProfile }
+      setAllUsers(prev => prev.map(u => u.id === userId ? optimistic as any : u))
+      try {
+         const saved = await svc.adminUpdateUser(userId, patch)
+         if (saved) setAllUsers(prev => prev.map(u => u.id === userId ? saved as any : u))
+         try {
+            await svc.addAuditLog({
+               actorId: String(currentUser?.id || 'admin'),
+               actorRole: String(currentUser?.role || 'admin'),
+               action: 'admin.user.update',
+               entityType: 'user',
+               entityId: String(userId),
+               metadata: {
+                  before: {
+                     status: current.status,
+                     role: current.role,
+                     approvalStatus: (current as any)?.profile?.approvalStatus,
+                     isDeleted: (current as any)?.profile?.isDeleted
+                  },
+                  patch
+               }
+            })
+         } catch {
          }
-         return u;
-      }));
+      } catch (e) {
+         console.error(e)
+      }
+   }
+
+   const handleUserStatusChange = (userId: string, newStatus: 'active' | 'suspended', approvalStatus?: string) => {
+      const profilePatch: any = {}
+      if (approvalStatus) profilePatch.approvalStatus = approvalStatus
+      void handleAdminUpdateUser(userId, { status: newStatus, profilePatch: Object.keys(profilePatch).length ? profilePatch : undefined })
    };
 
   const recommendVehicleType = (weightKg: number) => {
@@ -6775,10 +7682,9 @@ const App = () => {
         acceptedBidId: bid.id,
         finalFare: agreedFare,
         status: 'assigned',
-        pickupOtp: generateOtp(),
-        deliveryOtp: generateOtp(),
-        transportPaymentStatus: 'held',
-        transportPaymentProof: `TRN-${Date.now()}`
+        assignedAt: new Date().toISOString(),
+        transportPaymentStatus: 'unpaid',
+        transportPaymentProof: null
      };
      setTransportRequests(prev => prev.map(r => r.id !== req.id ? r : ({ ...r, ...patch } as TransportRequest)));
      try {
@@ -6811,7 +7717,7 @@ const App = () => {
      // Legacy logic for direct assignment (kept for backward compatibility or admin overrides)
      const req = transportRequests.find(r => r.id === requestId);
      if (!req) return;
-     const patch = { transporterId, finalFare: finalFare ?? req.estimatedFare, status: 'assigned' };
+     const patch = { transporterId, finalFare: finalFare ?? req.estimatedFare, status: 'assigned', assignedAt: new Date().toISOString(), transportPaymentStatus: 'unpaid', transportPaymentProof: null };
      const saved = await svc.updateTransportRequest(req.id, patch);
      const updatedReq = saved ? saved : ({ ...req, ...patch } as TransportRequest);
      setTransportRequests(prev => prev.map(r => r.id === updatedReq.id ? updatedReq : r));
@@ -6835,6 +7741,19 @@ const App = () => {
   const handleUpdateTransportRequestStatus = async (requestId: string, status: TransportRequest['status'], otp?: string) => {
      const req = transportRequests.find(r => r.id === requestId);
      if (!req) return;
+     const order = orders.find(o => o.id === req.orderId)
+     const orderPaymentOk = !order || order.paymentStatus === 'held' || order.paymentStatus === 'released'
+     const transportPaymentOk = (req.transportPaymentStatus || 'unpaid') === 'held' || (req.transportPaymentStatus || 'unpaid') === 'released'
+     if (status === 'picked_up' || status === 'in_transit' || status === 'delivered') {
+        if (!orderPaymentOk) {
+           alert('Buyer product payment is pending. Cannot proceed.')
+           return
+        }
+        if (req.mode === 'marketplace' && !transportPaymentOk) {
+           alert('Buyer transport payment is pending. Cannot proceed.')
+           return
+        }
+     }
      const patch: any = { status }
      if (status === 'picked_up') {
         const entered = (otp || '').trim()
@@ -6856,13 +7775,16 @@ const App = () => {
         }
         const deliveredAt = new Date().toISOString()
         patch.deliveryConfirmedAt = deliveredAt
-        patch.transportPaymentStatus = 'released'
+        if (req.mode === 'marketplace' && (req.transportPaymentStatus || 'unpaid') === 'held') patch.transportPaymentStatus = 'released'
         const pickupAt = req.pickupConfirmedAt
         const start = pickupAt ? Date.parse(pickupAt) : NaN
         const end = Date.parse(deliveredAt)
         if (Number.isFinite(start) && Number.isFinite(end) && end >= start) {
            patch.totalTimeMinutes = Math.round((end - start) / 60000)
         }
+     }
+     if (status === 'cancelled') {
+        if ((req.transportPaymentStatus || 'unpaid') === 'held') patch.transportPaymentStatus = 'refunded'
      }
      const saved = await svc.updateTransportRequest(requestId, patch);
      const updatedReq = saved ? saved : ({ ...req, ...patch } as TransportRequest);
@@ -6873,6 +7795,65 @@ const App = () => {
      if (orderStatus) {
         await svc.setOrderStatus(req.orderId, orderStatus);
         setOrders(prev => prev.map(o => o.id === req.orderId ? { ...o, status: orderStatus } : o));
+     }
+
+     if (status === 'delivered') {
+        if (order && order.paymentStatus === 'held') {
+           try {
+              const savedOrder = await svc.updateOrderPayment(order.id, 'released', order.paymentProof)
+              setOrders(prev => prev.map(o => o.id === order.id ? savedOrder : o))
+           } catch {
+           }
+           try {
+              const farmerId = String(order.farmerId || (allUsers || []).find((u: any) => u.profile?.fullName === order.farmerName)?.id || '')
+              if (farmerId) {
+                 const payout: Payout = {
+                    id: `payout_order_${order.id}`,
+                    userId: farmerId,
+                    orderId: order.id,
+                    amount: Number(order.totalAmount || 0),
+                    status: 'paid',
+                    createdAt: new Date().toISOString()
+                 }
+                 const savedPayout = await svc.addPayout(payout as any)
+                 if (savedPayout) setPayouts(prev => [savedPayout, ...prev])
+              }
+           } catch {
+           }
+        }
+        if (req.mode === 'marketplace' && (req.transportPaymentStatus || 'unpaid') === 'held' && updatedReq.transporterId) {
+           const amount = Number(updatedReq.finalFare ?? updatedReq.estimatedFare ?? 0)
+           try {
+              const payout: Payout = {
+                 id: `payout_transport_${updatedReq.id}`,
+                 userId: String(updatedReq.transporterId || ''),
+                 orderId: updatedReq.orderId,
+                 amount,
+                 status: 'paid',
+                 createdAt: new Date().toISOString()
+              }
+              const savedPayout = await svc.addPayout(payout as any)
+              if (savedPayout) setPayouts(prev => [savedPayout, ...prev])
+           } catch {
+           }
+        }
+     }
+
+     if (status === 'cancelled') {
+        if (order && order.paymentStatus === 'held') {
+           try {
+              const savedOrder = await svc.updateOrderPayment(order.id, 'refunded', order.paymentProof)
+              setOrders(prev => prev.map(o => o.id === order.id ? savedOrder : o))
+           } catch {
+           }
+        }
+        if (req.mode === 'marketplace' && (req.transportPaymentStatus || 'unpaid') === 'held') {
+           try {
+              const savedReq = await svc.updateTransportRequest(req.id, { transportPaymentStatus: 'refunded' } as any)
+              if (savedReq) setTransportRequests(prev => prev.map(r => r.id === savedReq.id ? savedReq : r))
+           } catch {
+           }
+        }
      }
   };
 
@@ -6885,7 +7866,28 @@ const App = () => {
      setOrders(prev => prev.map(o => o.id === orderId ? { ...o, paymentStatus, paymentProof: paymentProof ?? o.paymentProof } : o));
   };
 
-   const handleResolveDispute = async (disputeId: string, outcome: string) => { await svc.resolveDispute(disputeId, 'resolved'); setDisputes(disputes.map(d => d.id === disputeId ? { ...d, status: 'resolved' } : d)); };
+   const handleResolveDispute = async (disputeId: string, outcome: 'refund_buyer' | 'release_farmer' | string, adminNotes?: string) => {
+      const now = new Date().toISOString()
+      const patch: any = { status: 'resolved', outcome, adminNotes: adminNotes ?? null, resolvedAt: now, resolvedBy: String(currentUser?.id || 'admin') }
+      setDisputes(prev => prev.map(d => d.id === disputeId ? ({ ...d, ...patch } as any) : d))
+      try {
+         const saved = await svc.resolveDispute(disputeId, patch)
+         if (saved) setDisputes(prev => prev.map(d => d.id === disputeId ? saved as any : d))
+         try {
+            await svc.addAuditLog({
+               actorId: String(currentUser?.id || 'admin'),
+               actorRole: String(currentUser?.role || 'admin'),
+               action: 'admin.dispute.resolve',
+               entityType: 'dispute',
+               entityId: String(disputeId),
+               metadata: { outcome, adminNotes: adminNotes ?? null }
+            })
+         } catch {
+         }
+      } catch (e) {
+         console.error(e)
+      }
+   };
 
   const handleAddInventoryItem = async (item: Omit<InventoryItem, 'id' | 'createdAt'>) => {
      const newItem: InventoryItem = { ...item, id: `inv_${Date.now()}`, createdAt: new Date().toISOString() };
@@ -7019,11 +8021,87 @@ const App = () => {
    };
 
    return (
+      <DialogContext.Provider value={dialogs}>
       <div className="min-h-screen font-sans text-slate-900 bg-slate-50">
+         {dialog && (
+            <div className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => {
+               if (!dialogResolveRef.current) return
+               const resolve = dialogResolveRef.current
+               dialogResolveRef.current = null
+               if (dialog.kind === 'confirm') resolve(false)
+               else resolve(null)
+               setDialog(null)
+            }}>
+               <Card className="w-full max-w-lg p-0 overflow-hidden bg-white" onClick={(e: any) => e.stopPropagation()}>
+                  <div className="p-5 border-b border-slate-100 flex items-center justify-between">
+                     <div className="min-w-0">
+                        <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">{dialog.kind === 'confirm' ? (dialog.title || 'Confirm') : (dialog.req.title || 'Input')}</div>
+                        <div className="text-lg font-black text-slate-900 mt-1">{dialog.kind === 'confirm' ? dialog.message : dialog.req.message}</div>
+                     </div>
+                     <button className="p-2 hover:bg-slate-100 rounded-xl" onClick={() => {
+                        if (!dialogResolveRef.current) return
+                        const resolve = dialogResolveRef.current
+                        dialogResolveRef.current = null
+                        if (dialog.kind === 'confirm') resolve(false)
+                        else resolve(null)
+                        setDialog(null)
+                     }}>
+                        <X className="w-5 h-5" />
+                     </button>
+                  </div>
+                  {dialog.kind === 'prompt' && (
+                     <div className="p-5">
+                        {dialog.req.multiline ? (
+                           <textarea
+                              value={dialog.value}
+                              onChange={(e) => setDialog(prev => prev && prev.kind === 'prompt' ? ({ ...prev, value: e.target.value } as any) : prev)}
+                              rows={4}
+                              className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-orange-500/30 focus:border-orange-500 transition-all placeholder:text-slate-400"
+                              placeholder={dialog.req.placeholder}
+                           />
+                        ) : (
+                           <input
+                              value={dialog.value}
+                              onChange={(e) => setDialog(prev => prev && prev.kind === 'prompt' ? ({ ...prev, value: e.target.value } as any) : prev)}
+                              className="w-full h-12 bg-white border border-slate-200 rounded-xl px-4 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-orange-500/30 focus:border-orange-500 transition-all placeholder:text-slate-400"
+                              placeholder={dialog.req.placeholder}
+                           />
+                        )}
+                     </div>
+                  )}
+                  <div className="p-5 border-t border-slate-100 bg-slate-50 flex justify-end gap-3">
+                     <Button variant="ghost" className="h-10 text-sm font-black" onClick={() => {
+                        if (!dialogResolveRef.current) return
+                        const resolve = dialogResolveRef.current
+                        dialogResolveRef.current = null
+                        if (dialog.kind === 'confirm') resolve(false)
+                        else resolve(null)
+                        setDialog(null)
+                     }}>Cancel</Button>
+                     <Button className="h-10 text-sm font-black bg-slate-900 hover:bg-slate-800" onClick={() => {
+                        if (!dialogResolveRef.current) return
+                        const resolve = dialogResolveRef.current
+                        dialogResolveRef.current = null
+                        if (dialog.kind === 'confirm') resolve(true)
+                        else resolve(dialog.value)
+                        setDialog(null)
+                     }}>{dialog.kind === 'confirm' ? 'Confirm' : 'Submit'}</Button>
+                  </div>
+               </Card>
+            </div>
+         )}
          {connectionError && (
             <div className="bg-red-600 text-white px-4 py-2 text-center text-sm font-bold flex items-center justify-center gap-2 sticky top-0 z-[100]">
                <AlertCircle className="w-4 h-4" />
-               {connectionError}
+               <span>{connectionError}</span>
+               <button
+                  type="button"
+                  className="ml-2 px-3 py-1 rounded-lg bg-white/15 hover:bg-white/20 border border-white/20 text-xs font-black"
+                  disabled={isCheckingConnection}
+                  onClick={() => void runConnectionCheck()}
+               >
+                  {isCheckingConnection ? 'Checking...' : 'Retry'}
+               </button>
             </div>
          )}
          {screen === 'landing' && <LandingPage onGetStarted={handleGetStarted} onAdminLogin={() => setScreen('admin-login')} />}
@@ -7031,7 +8109,7 @@ const App = () => {
         {screen === 'auth' && <div className="min-h-screen bg-gradient-to-br from-nature-50 to-blue-50 flex items-center justify-center p-4"><AuthWizard initialRole={selectedRole} initialMode={authMode} onComplete={handleAuthComplete} onBack={() => setScreen('landing')} /></div>}
          {screen === 'admin-login' && <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4"><AdminLogin onLogin={handleAdminLogin} onBack={() => setScreen('landing')} /></div>}
 
-         {screen === 'dashboard' && currentUser?.role === 'admin' && <AdminDashboard allUsers={allUsers} listings={listings} orders={orders} disputes={disputes} systemConfig={systemConfig} onUpdateConfig={setSystemConfig} onLogout={handleLogout} onUpdateUserStatus={handleUserStatusChange} onResolveDispute={handleResolveDispute} />}
+         {screen === 'dashboard' && currentUser?.role === 'admin' && <AdminDashboard adminUser={currentUser} allUsers={allUsers} listings={listings} orders={orders} disputes={disputes} systemConfig={systemConfig} onUpdateConfig={setSystemConfig} onLogout={handleLogout} onAdminUpdateUser={handleAdminUpdateUser} onResolveDispute={handleResolveDispute} />}
        {screen === 'dashboard' && currentUser?.role === 'farmer' && <FarmerDashboard user={currentUser} listings={listings} offers={offers} orders={orders} inventoryItems={inventoryItems} payouts={payouts} transportRequests={transportRequests} allUsers={allUsers} onAddInventoryItem={handleAddInventoryItem} onAddPayout={handleAddPayout} onAddListing={handleAddListing} onUpdateListing={handleUpdateListing} onUpdateListingStatus={handleUpdateListingStatus} onDeleteListing={handleDeleteListing} onAcceptOffer={handleAcceptOffer} onRejectOffer={handleRejectOffer} onCounterOffer={handleCounterOffer} onUpdateProfile={handleUpdateProfile} onRaiseDispute={handleRaiseDispute} onLogout={handleLogout} onAcceptTransportRequest={handleAcceptTransportRequest} onViewInvoice={handleViewInvoice} onUpdateOrderPayment={handleUpdateOrderPayment} onOpenLocationPicker={handleOpenLocationPicker} onOpenRating={handleOpenRating} />}
        {screen === 'dashboard' && currentUser?.role === 'buyer' && <BuyerDashboard user={currentUser} listings={listings} offers={offers} orders={orders} rfqs={rfqs} transportRequests={transportRequests} transportBids={transportBids} allUsers={allUsers} onAddRfq={handleAddRfq} onPlaceOffer={handlePlaceOffer} onAcceptOffer={handleAcceptOffer} onCounterOffer={handleCounterOffer} onCancelOffer={handleCancelOffer} onUpdateProfile={handleUpdateProfile} onRaiseDispute={handleRaiseDispute} onLogout={handleLogout} onCreateTransportRequest={handleCreateTransportRequest} onAcceptTransportBid={handleAcceptTransportBid} onCounterTransportBid={handleCounterTransportBid} onUpdateTransportRequest={handleUpdateTransportRequest} onViewInvoice={handleViewInvoice} onUpdateOrderPayment={handleUpdateOrderPayment} onDirectBuy={handleDirectBuy} onOpenLocationPicker={handleOpenLocationPicker} onOpenRating={handleOpenRating} />}
        {screen === 'dashboard' && currentUser?.role === 'transporter' && <TransporterDashboard user={currentUser} orders={orders} routePlans={routePlans} transportRequests={transportRequests} transportBids={transportBids} allUsers={allUsers} onAddRoutePlan={handleAddRoutePlan} onRaiseDispute={handleRaiseDispute} onLogout={handleLogout} onUpdateOrderStatus={handleUpdateOrderStatus} onUpdateProfile={handleUpdateProfile} onAddTransportBid={handleAddTransportBid} onUpdateTransportRequestStatus={handleUpdateTransportRequestStatus} onCounterTransportBid={handleCounterTransportBid} onTransporterAcceptBuyerCounter={handleTransporterAcceptBuyerCounter} onOpenLocationPicker={handleOpenLocationPicker} onOpenRating={handleOpenRating} />}
@@ -7093,6 +8171,7 @@ const App = () => {
             }}
          />
       </div>
+      </DialogContext.Provider>
    );
 };
 

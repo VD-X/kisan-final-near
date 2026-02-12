@@ -4,9 +4,31 @@ let cached: SupabaseClient | null = null
 let resolvedUrl: string | null = null
 let resolvedAnonKey: string | null = null
 
-const DEFAULT_FETCH_TIMEOUT_MS = 15000
+const DEFAULT_FETCH_TIMEOUT_MS = 60000
 
-function fetchWithTimeout(input: RequestInfo | URL, init?: RequestInit) {
+type SupabaseNetworkEvent = {
+  ts: string
+  url: string
+  method: string
+  durationMs: number
+  ok?: boolean
+  status?: number
+  error?: string
+}
+
+const networkLog: SupabaseNetworkEvent[] = []
+
+function pushNetworkEvent(ev: SupabaseNetworkEvent) {
+  networkLog.push(ev)
+  if (networkLog.length > 50) networkLog.splice(0, networkLog.length - 50)
+}
+
+export function getSupabaseNetworkLog() {
+  return [...networkLog]
+}
+
+async function fetchWithTimeout(input: RequestInfo | URL, init?: RequestInit) {
+  const startedAt = Date.now()
   const controller = new AbortController()
   const timeoutId = setTimeout(() => controller.abort(), DEFAULT_FETCH_TIMEOUT_MS)
 
@@ -25,12 +47,56 @@ function fetchWithTimeout(input: RequestInfo | URL, init?: RequestInit) {
     baseInit.signal = controller.signal
   }
 
-  return fetch(input, baseInit).finally(() => clearTimeout(timeoutId))
+  const url = typeof input === 'string' ? input : String((input as any)?.url || input)
+  const method = String((baseInit as any)?.method || 'GET')
+  try {
+    const res = await fetch(input, baseInit)
+    pushNetworkEvent({ ts: new Date().toISOString(), url, method, durationMs: Date.now() - startedAt, ok: res.ok, status: res.status })
+    return res
+  } catch (e: any) {
+    const name = e?.name || 'Error'
+    const message = e?.message || 'unknown_error'
+    pushNetworkEvent({ ts: new Date().toISOString(), url, method, durationMs: Date.now() - startedAt, ok: false, error: `${name}: ${message}` })
+    throw e
+  } finally {
+    clearTimeout(timeoutId)
+  }
 }
 
 export function getSupabaseConfig() {
   if (!resolvedUrl || !resolvedAnonKey) return null
   return { url: resolvedUrl, anonKey: resolvedAnonKey }
+}
+
+function canUseBrowserStorage() {
+  return typeof window !== 'undefined' && typeof window.localStorage !== 'undefined'
+}
+
+export function clearSupabaseAuthStorage() {
+  if (!canUseBrowserStorage()) return
+  const cfg = getSupabaseConfig()
+  if (!cfg?.url) return
+  let ref: string | null = null
+  try {
+    ref = new URL(cfg.url).hostname.split('.')[0] || null
+  } catch {
+    ref = null
+  }
+  if (!ref) return
+  const prefix = `sb-${ref}-`
+  const toRemove: string[] = []
+  for (let i = 0; i < window.localStorage.length; i++) {
+    const k = window.localStorage.key(i)
+    if (!k) continue
+    if (k.startsWith(prefix)) toRemove.push(k)
+  }
+  for (const k of toRemove) {
+    try { window.localStorage.removeItem(k) } catch { }
+  }
+}
+
+export function resetSupabaseClient() {
+  cached = null
 }
 
 export function getSupabase(): SupabaseClient | null {
@@ -40,10 +106,6 @@ export function getSupabase(): SupabaseClient | null {
   let url = (import.meta as any)?.env?.VITE_SUPABASE_URL
   let key = (import.meta as any)?.env?.VITE_SUPABASE_ANON_KEY
 
-  // Fallback to hardcoded values if env is missing (Debug Fix)
-  if (!url) url = "https://ykvatttsnpjrwqfhhysu.supabase.co"
-  if (!key) key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlrdmF0dHRzbnBqcndxZmhoeXN1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA0OTk5NjQsImV4cCI6MjA4NjA3NTk2NH0.5Njnh8NBEcPDddHjwv3CoUpCcAHu-ALNUQHQVdAdq-Y"
-  
   if (!url || !key) {
     console.error("Supabase Config Missing. Env:", (import.meta as any)?.env);
     return null

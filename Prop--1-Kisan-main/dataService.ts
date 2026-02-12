@@ -1,4 +1,4 @@
-import { getSupabase, getSupabaseConfig } from './supabaseClient'
+import { clearSupabaseAuthStorage, getSupabase, getSupabaseConfig, resetSupabaseClient } from './supabaseClient'
 
 // --- GETTERS ---
 
@@ -105,14 +105,45 @@ export async function getUsers() {
   const c = getSupabase(); if (!c) return []
   const { data, error } = await c.from('users').select('*')
   if (error) { console.error('getUsers error', error); return [] }
-  return data
+  return (data || []).map((u: any) => {
+    const { passwordHash: _ph, passwordSalt: _ps, ...safe } = u || {}
+    return safe
+  })
 }
 
 export async function getUserById(id: string) {
   const c = getSupabase(); if (!c) return null
   const { data, error } = await c.from('users').select('*').eq('id', id).maybeSingle()
   if (error) { console.error('getUserById error', error); return null }
-  return data || null
+  if (!data) return null
+  const { passwordHash: _ph, passwordSalt: _ps, ...safe } = data as any
+  return safe || null
+}
+
+export async function getUserByIdWithError(id: string) {
+  const c = getSupabase(); if (!c) return { data: null, error: { message: 'Supabase not configured' } }
+  const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
+  const shouldRetry = (err: any) => {
+    const msg = String(err?.message || err || '')
+    return msg.includes('AbortError') || msg.includes('signal is aborted') || msg.includes('timeout')
+  }
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const { data, error } = await c.from('users').select('*').eq('id', id).maybeSingle()
+    if (error) {
+      console.error('getUserByIdWithError error', error)
+      if (shouldRetry(error) && attempt < 2) {
+        await sleep(300 + attempt * 600)
+        continue
+      }
+      return { data: null, error }
+    }
+    if (!data) return { data: null, error: null }
+    const { passwordHash: _ph, passwordSalt: _ps, ...safe } = data as any
+    return { data: safe || null, error: null }
+  }
+
+  return { data: null, error: { message: 'Unknown error' } }
 }
 
 export async function checkSupabaseConnectivity(timeoutMs = 8000) {
@@ -131,6 +162,7 @@ export async function checkSupabaseConnectivity(timeoutMs = 8000) {
     } catch (e: any) {
       const name = e?.name || 'Error'
       const message = e?.message || 'unknown_error'
+      if (name === 'AbortError') return { ok: false, error: 'timeout' }
       return { ok: false, error: `${name}: ${message}` }
     } finally {
       clearTimeout(timer)
@@ -235,6 +267,22 @@ export async function verifyOtp(phone: string, token: string) {
 
 export async function getCurrentUser() {
   const c = getSupabase(); if (!c) return null
+  try {
+    const { data } = await c.auth.getSession()
+    const authUserId = data?.session?.user?.id
+    if (authUserId) {
+      const { data: row, error } = await c.from('users').select('*').eq('id', authUserId).maybeSingle()
+      if (error) {
+        console.error('getCurrentUser error', error)
+        return null
+      }
+      if (!row) return null
+      const { passwordHash: _ph, passwordSalt: _ps, ...safe } = row as any
+      return safe || null
+    }
+  } catch {
+  }
+
   const session = getDemoSession()
   const userId = session?.userId
   if (!userId) return null
@@ -251,6 +299,19 @@ export async function getCurrentUser() {
 
 export async function signOut() {
   clearDemoSession()
+  const c = getSupabase()
+  try {
+    await Promise.race([
+      c?.auth?.signOut({ scope: 'local' } as any),
+      new Promise((resolve) => setTimeout(resolve, 5000))
+    ])
+  } catch {
+  }
+  try {
+    clearSupabaseAuthStorage()
+    resetSupabaseClient()
+  } catch {
+  }
 }
 
 // Deprecated: loginUser (kept for fallback reference if needed, but we should switch to OTP)
@@ -538,9 +599,9 @@ export async function raiseDispute(payload: any) {
   return data
 }
 
-export async function resolveDispute(id: string, status: string) {
+export async function resolveDispute(id: string, patch: any) {
   const c = getSupabase(); if (!c) throw new Error('Supabase not configured')
-  const { data, error } = await c.from('disputes').update({ status }).eq('id', id).select().single()
+  const { data, error } = await c.from('disputes').update(patch).eq('id', id).select().single()
   if (error) { console.error('resolveDispute error', error); throw error }
   return data
 }
@@ -552,6 +613,37 @@ export async function updateUserProfile(userId: string, profile: any) {
   if (error) { console.error('updateUserProfile error', error); throw error }
   console.log('[DataService] Update success:', data);
   return data
+}
+
+export async function adminUpdateUser(userId: string, patch: { status?: string; role?: string; profile?: any }) {
+  const c = getSupabase(); if (!c) throw new Error('Supabase not configured')
+  const { data, error } = await c.from('users').update(patch as any).eq('id', userId).select().single()
+  if (error) { console.error('adminUpdateUser error', error); throw error }
+  return data
+}
+
+export async function addAuditLog(payload: { actorId?: string; actorRole?: string; action: string; entityType?: string; entityId?: string; metadata?: any }) {
+  const c = getSupabase(); if (!c) return null
+  const row: any = {
+    actorId: payload.actorId ?? null,
+    actorRole: payload.actorRole ?? null,
+    action: payload.action,
+    entityType: payload.entityType ?? null,
+    entityId: payload.entityId ?? null,
+    metadata: payload.metadata ?? null,
+    createdAt: new Date().toISOString()
+  }
+  const { data, error } = await c.from('audit_logs').insert(row).select().single()
+  if (error) { console.error('addAuditLog error', error); throw error }
+  return data
+}
+
+export async function getAuditLogs(limit = 200) {
+  const c = getSupabase(); if (!c) return []
+  const lim = Math.max(1, Math.min(Number(limit || 200), 500))
+  const { data, error } = await c.from('audit_logs').select('*').order('createdAt', { ascending: false }).limit(lim)
+  if (error) { console.error('getAuditLogs error', error); return [] }
+  return data || []
 }
 
 export async function addInventoryItem(payload: any) {
